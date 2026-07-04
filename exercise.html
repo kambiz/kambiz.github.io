@@ -101,7 +101,7 @@ canvas { max-height:400px; }
 //  CONFIG
 // ─────────────────────────────────────────────────────────────
 const CSV_FILENAME  = 'kambizkamrani_workouts.csv';
-const CACHE_KEY     = 'peloton_cache_v1';
+const CACHE_KEY     = 'peloton_cache_v5';  // v5: calories & time charts independently sorted
 const REQUIRED_COLS = [
     'Workout Timestamp','Fitness Discipline','Length (minutes)',
     'Calories Burned','Avg. Watts','Avg. Heartrate','Instructor Name'
@@ -230,12 +230,17 @@ function processData(rows) {
     const fmtDate       = d => d.toLocaleDateString('en-US',{month:'short',year:'numeric'});
 
     const stats = {
-        totalWorkouts: valid.length,
-        totalCalories: Math.round(valid.reduce((s,r)=>s+(num(r,'Calories Burned')||0),0)),
-        totalHours:    +(totalMinutes/60).toFixed(1),
-        totalDistance: Math.round(valid.reduce((s,r)=>s+(num(r,'Distance (mi)')||0),0)),
-        firstDate:     fmtDate(firstDate),
-        lastDate:      fmtDate(lastDate)
+        totalWorkouts:   valid.length,
+        totalCalories:   Math.round(valid.reduce((s,r)=>s+(num(r,'Calories Burned')||0),0)),
+        totalHours:      +(totalMinutes/60).toFixed(1),
+        cyclingDistance: +valid
+            .filter(r=>r['Fitness Discipline']==='Cycling')
+            .reduce((s,r)=>s+(num(r,'Distance (mi)')||0),0).toFixed(1),
+        runWalkDistance: +valid
+            .filter(r=>['Running','Walking'].includes(r['Fitness Discipline']))
+            .reduce((s,r)=>s+(num(r,'Distance (mi)')||0),0).toFixed(1),
+        firstDate:       fmtDate(firstDate),
+        lastDate:        fmtDate(lastDate)
     };
 
     // Disciplines
@@ -246,7 +251,7 @@ function processData(rows) {
             calories: Math.round(v.reduce((s,r)=>s+(num(r,'Calories Burned')||0),0)),
             minutes:  Math.round(v.reduce((s,r)=>s+(num(r,'Length (minutes)')||0),0))
         }))
-        .sort((a,b)=>b.count-a.count);
+        .sort((a,b)=>b.minutes-a.minutes);   // sort by TIME, not raw count
     const disciplines = {
         labels:   discE.map(d=>d.label),
         counts:   discE.map(d=>d.count),
@@ -288,11 +293,33 @@ function processData(rows) {
         count:hrKeys.map(k=>hrMap2.get(k).length)
     };
 
-    // Day of week
-    const DAY_ORDER = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
-    const dowCount = Object.fromEntries(DAY_ORDER.map(d=>[d,0]));
-    valid.forEach(r=>{ if(dowCount[r._dow]!==undefined) dowCount[r._dow]++; });
-    const dayOfWeek = { labels:DAY_ORDER, counts:DAY_ORDER.map(d=>dowCount[d]) };
+    // Calories by discipline per month (stacked) — excludes Meditation (sparse calorie data)
+    const CAL_DISCS = ['Cycling','Yoga','Walking','Stretching','Running','Rowing','Strength','Cardio'];
+    const calMap = new Map();  // 'YYYY-MM' -> { discipline -> calories }
+    valid.forEach(r => {
+        const d = r['Fitness Discipline'];
+        if (!CAL_DISCS.includes(d)) return;
+        const cal = num(r, 'Calories Burned');
+        if (cal === null) return;
+        if (!calMap.has(r._ym)) calMap.set(r._ym, {});
+        const mo = calMap.get(r._ym);
+        mo[d] = (mo[d] || 0) + cal;
+    });
+    const calMonths = [...calMap.keys()].sort();
+    const caloriesByMonth = {
+        labels: calMonths,
+        datasets: Object.fromEntries(
+            CAL_DISCS.map(d => [d, calMonths.map(m => Math.round(calMap.get(m)?.[d] || 0))])
+        )
+    };
+
+    // Time of day histogram (hour 0–23)
+    const hourBins = Array(24).fill(0);
+    valid.forEach(r => { const h = r.ts.getHours(); if (h >= 0 && h < 24) hourBins[h]++; });
+    const timeOfDay = {
+        labels: Array.from({length:24}, (_,h) => `${String(h).padStart(2,'0')}:00`),
+        counts: hourBins
+    };
 
     // Heatmap
     const hmMap = groupBy(valid, r=>`${r._yr}-${r.ts.getMonth()+1}`);
@@ -301,20 +328,29 @@ function processData(rows) {
         for (let m=1; m<=12; m++)
             heatmap.push({ year:yr, month:m, count:(hmMap.get(`${yr}-${m}`)||[]).length });
 
-    // Activity by year
+    // Activity by year — keyed by MINUTES (not count) so pies reflect time spent
     const activityByYear = {};
     for (const yr of [2023,2024,2025,2026]) {
         const yd = valid.filter(r=>r._yr===yr);
         if (!yd.length) continue;
         const m = {};
-        yd.forEach(r=>{ const d=r['Fitness Discipline']; m[d]=(m[d]||0)+1; });
-        activityByYear[yr] = Object.fromEntries(Object.entries(m).sort((a,b)=>b[1]-a[1]));
+        yd.forEach(r=>{
+            const d  = r['Fitness Discipline'];
+            const mn = num(r,'Length (minutes)') || 0;
+            m[d] = (m[d]||0) + mn;
+        });
+        const asHours = Object.fromEntries(
+            Object.entries(m)
+                  .sort((a,b)=>b[1]-a[1])
+                  .map(([k,v])=>[k, Math.round(v)])
+        );
+        activityByYear[yr] = asHours;
     }
 
     // Validation totals (console only)
-    console.log(`✅ Disc total:${disciplines.counts.reduce((a,b)=>a+b,0)} Timeline:${timeline.counts.reduce((a,b)=>a+b,0)} DOW:${dayOfWeek.counts.reduce((a,b)=>a+b,0)} Expected:${valid.length}`);
+    console.log(`✅ Disc total:${disciplines.counts.reduce((a,b)=>a+b,0)} Timeline:${timeline.counts.reduce((a,b)=>a+b,0)} Expected:${valid.length}`);
 
-    return { stats, disciplines, timeline, instructors, powerOutput, heartRateCombined, dayOfWeek, heatmap, activityByYear };
+    return { stats, disciplines, timeline, instructors, powerOutput, heartRateCombined, caloriesByMonth, timeOfDay, heatmap, activityByYear };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -322,7 +358,7 @@ function processData(rows) {
 // ─────────────────────────────────────────────────────────────
 function renderDashboard(data, lastModified) {
     const { stats, disciplines, timeline, instructors, powerOutput,
-            heartRateCombined, dayOfWeek, heatmap, activityByYear } = data;
+            heartRateCombined, caloriesByMonth, timeOfDay, heatmap, activityByYear } = data;
 
     const luStr = lastModified
         ? new Date(lastModified).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})
@@ -351,6 +387,7 @@ function renderDashboard(data, lastModified) {
 
         <div class="chart-container">
             <h2>Workout Distribution by Discipline</h2>
+            <div class="description">Sized by hours spent — not number of sessions</div>
             <canvas id="disciplineChart"></canvas>
         </div>
 
@@ -377,13 +414,20 @@ function renderDashboard(data, lastModified) {
 
         <div class="chart-container">
             <h2>Activity Mix by Year</h2>
-            <div class="description">Greyscale at rest — hover to reveal colour</div>
+            <div class="description">Sized by hours spent — greyscale at rest, hover to reveal colour</div>
             <div class="pie-grid" id="pieGrid"></div>
         </div>
 
         <div class="chart-container">
-            <h2>Workout Activity by Day of Week</h2>
-            <canvas id="dayOfWeekChart"></canvas>
+            <h2>Calorie Burn by Activity Over Time</h2>
+            <div class="description">Stacked monthly calories by discipline — meditation excluded (insufficient calorie data)</div>
+            <canvas id="caloriesMonthChart"></canvas>
+        </div>
+
+        <div class="chart-container">
+            <h2>Workout Time of Day</h2>
+            <div class="description">When do you actually train? Total sessions by hour of day across all workouts</div>
+            <canvas id="timeOfDayChart"></canvas>
         </div>
 
         <div class="chart-container">
@@ -396,10 +440,11 @@ function renderDashboard(data, lastModified) {
 
     // Stat cards
     [
-        { v:stats.totalWorkouts.toLocaleString(),                         l:'Total Workouts'  },
-        { v:stats.totalHours.toLocaleString()+' hrs',                     l:'Time Invested'   },
-        { v:Math.round(stats.totalCalories/1000)+'k',                     l:'Calories Burned' },
-        { v:Math.round(stats.totalDistance/1000).toLocaleString()+'k mi', l:'Distance'        }
+        { v: stats.totalWorkouts.toLocaleString(),                              l: 'Total Workouts'        },
+        { v: stats.totalHours.toLocaleString() + ' hrs',                        l: 'Time Invested'         },
+        { v: Math.round(stats.totalCalories / 1000) + 'k',                      l: 'Calories Burned'       },
+        { v: stats.cyclingDistance.toLocaleString() + ' mi',                    l: 'Miles Cycled'          },
+        { v: stats.runWalkDistance.toLocaleString() + ' mi',                    l: 'Miles Run / Walked'    }
     ].forEach(s=>{
         const d=document.createElement('div'); d.className='stat-card';
         d.innerHTML=`<div class="value">${s.v}</div><div class="label">${s.l}</div>`;
@@ -411,44 +456,55 @@ function renderDashboard(data, lastModified) {
         y:{ ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} }
     };
 
-    // 1 · Discipline doughnut
+    // 1 · Discipline doughnut — slices sized by HOURS, not count
     new Chart(document.getElementById('disciplineChart'),{
         type:'doughnut',
-        data:{ labels:disciplines.labels, datasets:[{ data:disciplines.counts, backgroundColor:grays, borderWidth:2, borderColor:'#fff' }] },
+        data:{ labels:disciplines.labels, datasets:[{ data:disciplines.minutes, backgroundColor:grays, borderWidth:2, borderColor:'#fff' }] },
         options:{ responsive:true, plugins:{
             legend:{ position:'right', labels:{padding:14,font:{size:11},color:C.mid} },
             tooltip:{ callbacks:{ label:ctx=>{
                 const tot=ctx.dataset.data.reduce((a,b)=>a+b,0);
-                return `${ctx.label}: ${ctx.parsed} (${(ctx.parsed/tot*100).toFixed(1)}%)`;
+                const hrs=(ctx.parsed/60).toFixed(1);
+                return `${ctx.label}: ${hrs} hrs (${(ctx.parsed/tot*100).toFixed(1)}%)`;
             }}}
         }}
     });
 
-    // 2 · Calories horizontal bar
-    new Chart(document.getElementById('caloriesChart'),{
-        type:'bar',
-        data:{ labels:disciplines.labels, datasets:[{ data:disciplines.calories, backgroundColor:grays, borderWidth:0 }] },
-        options:{ indexAxis:'y', responsive:true,
-            plugins:{ legend:{display:false}, tooltip:{callbacks:{label:ctx=>`${ctx.parsed.x.toLocaleString()} cal`}} },
-            scales:{
-                x:{ beginAtZero:true, ticks:{color:C.mid,callback:v=>(v/1000).toFixed(0)+'k'}, grid:{color:'rgba(0,0,0,0.04)'} },
-                y:{ ticks:{color:C.mid}, grid:{display:false} }
+    // 2 · Calories horizontal bar — sorted by calories descending
+    (()=>{
+        const paired = disciplines.labels
+            .map((l,i) => ({ l, cal: disciplines.calories[i] }))
+            .sort((a,b) => b.cal - a.cal);
+        new Chart(document.getElementById('caloriesChart'),{
+            type:'bar',
+            data:{ labels:paired.map(p=>p.l), datasets:[{ data:paired.map(p=>p.cal), backgroundColor:grays, borderWidth:0 }] },
+            options:{ indexAxis:'y', responsive:true,
+                plugins:{ legend:{display:false}, tooltip:{callbacks:{label:ctx=>`${ctx.parsed.x.toLocaleString()} cal`}} },
+                scales:{
+                    x:{ beginAtZero:true, ticks:{color:C.mid,callback:v=>(v/1000).toFixed(0)+'k'}, grid:{color:'rgba(0,0,0,0.04)'} },
+                    y:{ ticks:{color:C.mid}, grid:{display:false} }
+                }
             }
-        }
-    });
+        });
+    })();
 
-    // 3 · Time bar
-    new Chart(document.getElementById('timeChart'),{
-        type:'bar',
-        data:{ labels:disciplines.labels, datasets:[{ data:disciplines.minutes.map(m=>(m/60).toFixed(1)), backgroundColor:grays, borderWidth:0 }] },
-        options:{ responsive:true,
-            plugins:{ legend:{display:false} },
-            scales:{
-                y:{ beginAtZero:true, ticks:{color:C.mid,callback:v=>v+' hrs'}, grid:{color:'rgba(0,0,0,0.04)'} },
-                x:{ ticks:{color:C.mid}, grid:{display:false} }
+    // 3 · Time bar — sorted by hours descending
+    (()=>{
+        const paired = disciplines.labels
+            .map((l,i) => ({ l, hrs: +(disciplines.minutes[i]/60).toFixed(1) }))
+            .sort((a,b) => b.hrs - a.hrs);
+        new Chart(document.getElementById('timeChart'),{
+            type:'bar',
+            data:{ labels:paired.map(p=>p.l), datasets:[{ data:paired.map(p=>p.hrs), backgroundColor:grays, borderWidth:0 }] },
+            options:{ responsive:true,
+                plugins:{ legend:{display:false}, tooltip:{callbacks:{label:ctx=>`${ctx.parsed.y} hrs`}} },
+                scales:{
+                    y:{ beginAtZero:true, ticks:{color:C.mid,callback:v=>v+' hrs'}, grid:{color:'rgba(0,0,0,0.04)'} },
+                    x:{ ticks:{color:C.mid}, grid:{display:false} }
+                }
             }
-        }
-    });
+        });
+    })();
 
     // 4 · Timeline line
     new Chart(document.getElementById('timelineChart'),{
@@ -564,25 +620,92 @@ function renderDashboard(data, lastModified) {
                 legend:{display:false},
                 tooltip:{ callbacks:{ label:ctx=>{
                     const tot=ctx.dataset.data.reduce((a,b)=>a+b,0);
-                    return `${ctx.label}: ${ctx.parsed} (${(ctx.parsed/tot*100).toFixed(1)}%)`;
+                    const hrs=(ctx.parsed/60).toFixed(1);
+                    return `${ctx.label}: ${hrs} hrs (${(ctx.parsed/tot*100).toFixed(1)}%)`;
                 }}}
             }}
         });
     });
 
-    // 8 · Day of week
-    new Chart(document.getElementById('dayOfWeekChart'),{
-        type:'bar',
-        data:{ labels:dayOfWeek.labels, datasets:[{ data:dayOfWeek.counts, backgroundColor:C.dark, borderWidth:0 }] },
-        options:{ responsive:true, plugins:{legend:{display:false}},
-            scales:{
-                y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
-                x:{ ticks:{color:C.mid}, grid:{display:false} }
-            }
-        }
-    });
+    // 8 · Stacked calories by discipline per month
+    (()=>{
+        const CAL_DISCS = ['Cycling','Yoga','Walking','Stretching','Running','Rowing','Strength','Cardio'];
+        // Grayscale shades mapped to each discipline (darkest = cycling = most calories)
+        const discGrays = ['#1a1a1a','#383838','#555555','#717171','#8d8d8d','#a8a8a8','#c4c4c4','#dedede'];
+        const datasets = CAL_DISCS
+            .map((d,i) => ({
+                label: d,
+                data:  caloriesByMonth.datasets[d] || caloriesByMonth.labels.map(()=>0),
+                backgroundColor: discGrays[i],
+                borderWidth: 0,
+                stack: 'cal'
+            }))
+            .filter(ds => ds.data.some(v=>v>0));  // drop disciplines with no data
 
-    // 9 · Monthly heatmap
+        new Chart(document.getElementById('caloriesMonthChart'),{
+            type:'bar',
+            data:{ labels:caloriesByMonth.labels, datasets },
+            options:{
+                responsive:true,
+                plugins:{
+                    legend:{ position:'top', labels:{color:C.mid,font:{size:10},padding:12} },
+                    tooltip:{
+                        mode:'index',
+                        callbacks:{
+                            label: ctx => {
+                                if (!ctx.parsed.y) return null;
+                                return `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()} cal`;
+                            },
+                            footer: items => {
+                                const tot = items.reduce((s,i)=>s+i.parsed.y,0);
+                                return `Total: ${tot.toLocaleString()} cal`;
+                            }
+                        }
+                    }
+                },
+                scales:{
+                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                    y:{ stacked:true, beginAtZero:true,
+                        ticks:{color:C.mid, callback:v=>v>=1000?(v/1000).toFixed(0)+'k':v},
+                        grid:{color:'rgba(0,0,0,0.04)'}
+                    }
+                }
+            }
+        });
+    })();
+
+    // 9 · Time of day histogram
+    (()=>{
+        // Shade bars by period: night=lightest, midday peak=darkest
+        const barColors = timeOfDay.counts.map((_,h) => {
+            if (h >= 5  && h <= 11) return '#2e2e2e';   // morning — dark
+            if (h >= 12 && h <= 17) return '#575757';   // afternoon — mid
+            if (h >= 18 && h <= 22) return '#8c8c8c';   // evening — lighter
+            return '#c4c4c4';                            // night/early — lightest
+        });
+        new Chart(document.getElementById('timeOfDayChart'),{
+            type:'bar',
+            data:{ labels:timeOfDay.labels, datasets:[{
+                label:'Sessions',
+                data:timeOfDay.counts,
+                backgroundColor:barColors,
+                borderWidth:0
+            }]},
+            options:{
+                responsive:true,
+                plugins:{
+                    legend:{display:false},
+                    tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} sessions` }}
+                },
+                scales:{
+                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                    y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} }
+                }
+            }
+        });
+    })();
+
+    // 10 · Monthly heatmap
     const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const byYr={2023:Array(12).fill(0),2024:Array(12).fill(0),2025:Array(12).fill(0),2026:Array(12).fill(0)};
     heatmap.forEach(r=>{ if(byYr[r.year]) byYr[r.year][r.month-1]=r.count; });
