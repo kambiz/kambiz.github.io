@@ -27,36 +27,37 @@ body {
 /* ── Stat cards ── */
 .stats-grid {
     display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
-    gap:18px;
-    margin-bottom:56px;
+    grid-template-columns:repeat(3,1fr);
+    gap:14px;
+    margin-bottom:48px;
 }
-.stat-card { border:2px solid #000; padding:28px 18px; text-align:center; transition:background .15s; }
+.stat-card { border:2px solid #000; padding:22px 14px; text-align:center; transition:background .15s; }
 .stat-card:hover { background:#f5f5f5; }
-.stat-card .value { font-size:2.4em; font-weight:700; margin-bottom:6px; font-variant-numeric:tabular-nums; }
-.stat-card .label { font-size:.8em; text-transform:uppercase; letter-spacing:1.2px; color:#666; }
+.stat-card .value { font-size:2em; font-weight:700; margin-bottom:5px; font-variant-numeric:tabular-nums; line-height:1.1; }
+.stat-card .label { font-size:.75em; text-transform:uppercase; letter-spacing:1.1px; color:#666; }
 
 /* ── Chart containers ── */
-.chart-container { border:1px solid #ccc; padding:30px; margin-bottom:36px; background:#fff; }
-.chart-container h2 { font-size:1.2em; font-weight:600; margin-bottom:6px; letter-spacing:-.2px; }
-.chart-container .description { color:#666; font-size:.85em; margin-bottom:18px; }
-.two-col { display:grid; grid-template-columns:1fr 1fr; gap:28px; }
+.chart-container { border:1px solid #ccc; padding:24px; margin-bottom:28px; background:#fff; }
+.chart-container h2 { font-size:1.15em; font-weight:600; margin-bottom:5px; letter-spacing:-.2px; }
+.chart-container .description { color:#666; font-size:.82em; margin-bottom:16px; }
+.two-col { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+.three-col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:24px; }
 
 canvas { max-height:400px; }
 
 /* ── Pie grid ── */
-.pie-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:20px; align-items:start; }
+.pie-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; align-items:start; }
 .pie-item { text-align:center; }
-.pie-item h3 { font-size:1em; font-weight:600; margin-bottom:12px; color:#333; }
-.pie-item canvas { max-height:200px; }
+.pie-item h3 { font-size:.95em; font-weight:600; margin-bottom:10px; color:#333; }
+.pie-item canvas { max-height:180px; }
 
 /* ── Insight box ── */
 .insight-box {
     border-left:3px solid #000;
-    padding:18px 20px;
-    margin:0 0 44px;
+    padding:16px 20px;
+    margin:0 0 40px;
     background:#f9f9f9;
-    font-size:.92em;
+    font-size:.9em;
     line-height:1.75;
 }
 
@@ -83,13 +84,30 @@ canvas { max-height:400px; }
 @keyframes spin { to { transform:rotate(360deg); } }
 
 /* ── Footer ── */
-.footer { text-align:center; margin-top:56px; padding-top:28px; border-top:1px solid #ccc; color:#999; font-size:.82em; }
+.footer { text-align:center; margin-top:48px; padding-top:24px; border-top:1px solid #ccc; color:#999; font-size:.82em; }
 
-@media(max-width:800px){
-    .two-col { grid-template-columns:1fr; }
-    .pie-grid { grid-template-columns:repeat(2,1fr); }
-    .header h1 { font-size:1.8em; }
-    .stat-card .value { font-size:2em; }
+/* ── Tablet ── */
+@media(max-width:900px){
+    .stats-grid { grid-template-columns:repeat(3,1fr); }
+    .pie-grid { grid-template-columns:repeat(2,1fr); gap:20px; }
+    .three-col { grid-template-columns:1fr 1fr; }
+}
+
+/* ── Mobile ── */
+@media(max-width:600px){
+    body { padding:24px 14px; }
+    .header h1 { font-size:1.6em; }
+    .header-meta { flex-direction:column; gap:4px; }
+    .stats-grid { grid-template-columns:repeat(2,1fr); gap:10px; margin-bottom:32px; }
+    .stat-card { padding:16px 10px; }
+    .stat-card .value { font-size:1.5em; }
+    .stat-card .label { font-size:.68em; }
+    .two-col { grid-template-columns:1fr; gap:0; }
+    .two-col .chart-container { margin-bottom:28px; }
+    .three-col { grid-template-columns:1fr; }
+    .pie-grid { grid-template-columns:repeat(2,1fr); gap:16px; }
+    .chart-container { padding:18px 14px; }
+    canvas { max-height:300px; }
 }
 </style>
 </head>
@@ -101,7 +119,7 @@ canvas { max-height:400px; }
 //  CONFIG
 // ─────────────────────────────────────────────────────────────
 const CSV_FILENAME  = 'kambizkamrani_workouts.csv';
-const CACHE_KEY     = 'peloton_cache_v5';  // v5: calories & time charts independently sorted
+const CACHE_KEY     = 'peloton_cache_v6';  // v6: mobile layout, rounded stats, streak card, 3 new charts
 const REQUIRED_COLS = [
     'Workout Timestamp','Fitness Discipline','Length (minutes)',
     'Calories Burned','Avg. Watts','Avg. Heartrate','Instructor Name'
@@ -347,18 +365,53 @@ function processData(rows) {
         activityByYear[yr] = asHours;
     }
 
-    // Validation totals (console only)
-    console.log(`✅ Disc total:${disciplines.counts.reduce((a,b)=>a+b,0)} Timeline:${timeline.counts.reduce((a,b)=>a+b,0)} Expected:${valid.length}`);
+    // Longest consecutive day streak
+    const uniqueDates = [...new Set(valid.map(r=>r.ts.toDateString()))].map(s=>new Date(s)).sort((a,b)=>a-b);
+    let longestStreak=1, curStreak=1;
+    for(let i=1;i<uniqueDates.length;i++){
+        const diff=(uniqueDates[i]-uniqueDates[i-1])/(1000*60*60*24);
+        if(diff===1){ curStreak++; longestStreak=Math.max(longestStreak,curStreak); } else curStreak=1;
+    }
 
-    return { stats, disciplines, timeline, instructors, powerOutput, heartRateCombined, caloriesByMonth, timeOfDay, heatmap, activityByYear };
+    // Cycling power zone distribution
+    const PW_BINS   = [0,100,150,175,200,225,250,Infinity];
+    const PW_LABELS = ['< 100W','100–150W','150–175W','175–200W','200–225W','225–250W','250W+'];
+    const pwZoneCounts = Array(PW_LABELS.length).fill(0);
+    valid.filter(r=>r['Fitness Discipline']==='Cycling').forEach(r=>{
+        const w=num(r,'Avg. Watts'); if(w===null) return;
+        for(let i=0;i<PW_BINS.length-1;i++) if(w>=PW_BINS[i]&&w<PW_BINS[i+1]){ pwZoneCounts[i]++; break; }
+    });
+    const powerZones = { labels:PW_LABELS, counts:pwZoneCounts };
+
+    // HR zone distribution (by session count)
+    const HR_BINS   = [0,100,120,140,160,Infinity];
+    const HR_LABELS = ['< 100 bpm','100–120 bpm','120–140 bpm','140–160 bpm','160+ bpm'];
+    const hrZoneCounts = Array(HR_LABELS.length).fill(0);
+    valid.forEach(r=>{ const h=num(r,'Avg. Heartrate'); if(h===null) return;
+        for(let i=0;i<HR_BINS.length-1;i++) if(h>=HR_BINS[i]&&h<HR_BINS[i+1]){ hrZoneCounts[i]++; break; }
+    });
+    const hrZones = { labels:HR_LABELS, counts:hrZoneCounts };
+
+    // Year-over-year total hours
+    const YOY_YEARS = [2022,2023,2024,2025,2026];
+    const yoyHours = {
+        labels: YOY_YEARS.map(String),
+        hours:  YOY_YEARS.map(yr=>+( valid.filter(r=>r._yr===yr).reduce((s,r)=>s+(num(r,'Length (minutes)')||0),0)/60).toFixed(1))
+    };
+
+    // Validation totals (console only)
+    console.log(`✅ Disc total:${disciplines.counts.reduce((a,b)=>a+b,0)} Timeline:${timeline.counts.reduce((a,b)=>a+b,0)} Expected:${valid.length} Streak:${longestStreak}days`);
+
+    return { stats, longestStreak, disciplines, timeline, instructors, powerOutput, heartRateCombined, caloriesByMonth, timeOfDay, heatmap, activityByYear, powerZones, hrZones, yoyHours };
 }
 
 // ─────────────────────────────────────────────────────────────
 //  RENDER
 // ─────────────────────────────────────────────────────────────
 function renderDashboard(data, lastModified) {
-    const { stats, disciplines, timeline, instructors, powerOutput,
-            heartRateCombined, caloriesByMonth, timeOfDay, heatmap, activityByYear } = data;
+    const { stats, longestStreak, disciplines, timeline, instructors, powerOutput,
+            heartRateCombined, caloriesByMonth, timeOfDay, heatmap, activityByYear,
+            powerZones, hrZones, yoyHours } = data;
 
     const luStr = lastModified
         ? new Date(lastModified).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})
@@ -424,10 +477,30 @@ function renderDashboard(data, lastModified) {
             <canvas id="caloriesMonthChart"></canvas>
         </div>
 
-        <div class="chart-container">
-            <h2>Workout Time of Day</h2>
-            <div class="description">When do you actually train? Total sessions by hour of day across all workouts</div>
-            <canvas id="timeOfDayChart"></canvas>
+        <div class="two-col">
+            <div class="chart-container">
+                <h2>Workout Time of Day</h2>
+                <div class="description">Total sessions by hour across all workouts</div>
+                <canvas id="timeOfDayChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <h2>Training Volume by Year</h2>
+                <div class="description">Total hours invested per calendar year</div>
+                <canvas id="yoyChart"></canvas>
+            </div>
+        </div>
+
+        <div class="two-col">
+            <div class="chart-container">
+                <h2>Cycling Power Zone Distribution</h2>
+                <div class="description">How many rides fall in each average watt bucket</div>
+                <canvas id="powerZoneChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <h2>Heart Rate Zone Distribution</h2>
+                <div class="description">Sessions by average heart rate across all activities</div>
+                <canvas id="hrZoneChart"></canvas>
+            </div>
         </div>
 
         <div class="chart-container">
@@ -438,13 +511,14 @@ function renderDashboard(data, lastModified) {
         <div class="footer">Chart.js &nbsp;|&nbsp; ${luStr ? 'Data last updated: ' + luStr : 'kambiz.github.io'}</div>
     `;
 
-    // Stat cards
+    // Stat cards — 6 cards, 3-col grid (wraps to 2-col on mobile)
     [
-        { v: stats.totalWorkouts.toLocaleString(),                              l: 'Total Workouts'        },
-        { v: stats.totalHours.toLocaleString() + ' hrs',                        l: 'Time Invested'         },
-        { v: Math.round(stats.totalCalories / 1000) + 'k',                      l: 'Calories Burned'       },
-        { v: stats.cyclingDistance.toLocaleString() + ' mi',                    l: 'Miles Cycled'          },
-        { v: stats.runWalkDistance.toLocaleString() + ' mi',                    l: 'Miles Run / Walked'    }
+        { v: stats.totalWorkouts.toLocaleString(),                         l: 'Total Workouts'     },
+        { v: Math.round(stats.totalHours).toLocaleString() + ' hrs',       l: 'Time Invested'      },
+        { v: Math.round(stats.totalCalories / 1000) + 'k cal',             l: 'Calories Burned'    },
+        { v: longestStreak + ' days',                                       l: 'Longest Streak'     },
+        { v: Math.round(stats.cyclingDistance / 1000 * 10) / 10 + 'k mi', l: 'Miles Cycled'       },
+        { v: Math.round(stats.runWalkDistance) + ' mi',                    l: 'Miles Run / Walked' }
     ].forEach(s=>{
         const d=document.createElement('div'); d.className='stat-card';
         d.innerHTML=`<div class="value">${s.v}</div><div class="label">${s.l}</div>`;
@@ -705,7 +779,64 @@ function renderDashboard(data, lastModified) {
         });
     })();
 
-    // 10 · Monthly heatmap
+    // 10 · Year-over-year total hours
+    new Chart(document.getElementById('yoyChart'),{
+        type:'bar',
+        data:{ labels:yoyHours.labels, datasets:[{
+            data:yoyHours.hours,
+            backgroundColor: yoyHours.labels.map((_,i)=>grays[Math.min(i,grays.length-1)]),
+            borderWidth:0
+        }]},
+        options:{ responsive:true,
+            plugins:{ legend:{display:false},
+                tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} hrs` }}
+            },
+            scales:{
+                y:{ beginAtZero:true, ticks:{color:C.mid, callback:v=>v+' hrs'}, grid:{color:'rgba(0,0,0,0.04)'} },
+                x:{ ticks:{color:C.mid}, grid:{display:false} }
+            }
+        }
+    });
+
+    // 11 · Cycling power zone distribution
+    new Chart(document.getElementById('powerZoneChart'),{
+        type:'bar',
+        data:{ labels:powerZones.labels, datasets:[{
+            data:powerZones.counts,
+            backgroundColor:grays.slice(0,powerZones.labels.length),
+            borderWidth:0
+        }]},
+        options:{ responsive:true,
+            plugins:{ legend:{display:false},
+                tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} rides` }}
+            },
+            scales:{
+                y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
+                x:{ ticks:{color:C.mid,maxRotation:30,minRotation:30}, grid:{display:false} }
+            }
+        }
+    });
+
+    // 12 · Heart rate zone distribution
+    new Chart(document.getElementById('hrZoneChart'),{
+        type:'bar',
+        data:{ labels:hrZones.labels, datasets:[{
+            data:hrZones.counts,
+            backgroundColor:grays.slice(0,hrZones.labels.length),
+            borderWidth:0
+        }]},
+        options:{ responsive:true,
+            plugins:{ legend:{display:false},
+                tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} sessions` }}
+            },
+            scales:{
+                y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
+                x:{ ticks:{color:C.mid,maxRotation:30,minRotation:30}, grid:{display:false} }
+            }
+        }
+    });
+
+    // 13 · Monthly heatmap
     const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const byYr={2023:Array(12).fill(0),2024:Array(12).fill(0),2025:Array(12).fill(0),2026:Array(12).fill(0)};
     heatmap.forEach(r=>{ if(byYr[r.year]) byYr[r.year][r.month-1]=r.count; });
