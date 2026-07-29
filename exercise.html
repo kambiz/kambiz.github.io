@@ -119,7 +119,7 @@ canvas { max-height:400px; }
 //  CONFIG
 // ─────────────────────────────────────────────────────────────
 const CSV_FILENAME  = 'kambizkamrani_workouts.csv';
-const CACHE_KEY     = 'peloton_cache_v7';  // v7: instructors ranked by hours with x-axis label
+const CACHE_KEY     = 'peloton_cache_v8';  // v8: time-weighted avg power output
 const REQUIRED_COLS = [
     'Workout Timestamp','Fitness Discipline','Length (minutes)',
     'Calories Burned','Avg. Watts','Avg. Heartrate','Instructor Name'
@@ -302,15 +302,34 @@ function processData(rows) {
         classes: instTop.map(d=>d[1].classes)
     };
 
-    // Power output — cycling only, ≥3 rides/month
-    const cyc   = valid.filter(r=>r['Fitness Discipline']==='Cycling'&&num(r,'Avg. Watts')!==null);
+    // Power output — cycling only, ≥3 rides/month, TIME-WEIGHTED average
+    // Weighted mean: Σ(watts × minutes) / Σ(minutes)
+    // Weighted std:  sqrt( Σ(minutes × (watts - μ)²) / Σ(minutes) )
+    const cyc   = valid.filter(r=>
+        r['Fitness Discipline']==='Cycling' &&
+        num(r,'Avg. Watts')!==null &&
+        num(r,'Length (minutes)')!==null &&
+        num(r,'Length (minutes)')>0
+    );
     const pwMap  = groupBy(cyc, r=>r._ym);
     const pwKeys = [...pwMap.keys()].sort().filter(k=>pwMap.get(k).length>=3);
+
+    function weightedMeanStd(rides) {
+        const totalMin = rides.reduce((s,r)=>s+(num(r,'Length (minutes)')||0),0);
+        if(totalMin===0) return {mean:null,std:0};
+        const mu = rides.reduce((s,r)=>s+(num(r,'Avg. Watts')||0)*(num(r,'Length (minutes)')||0),0) / totalMin;
+        const variance = rides.reduce((s,r)=>{
+            const w=num(r,'Length (minutes)')||0, x=num(r,'Avg. Watts')||0;
+            return s + w*(x-mu)**2;
+        },0) / totalMin;
+        return { mean:+mu.toFixed(1), std:+Math.sqrt(variance).toFixed(1) };
+    }
+
     const powerOutput = {
         labels: pwKeys,
-        mean: pwKeys.map(k=>meanStd(pwMap.get(k).map(r=>num(r,'Avg. Watts'))).mean),
-        std:  pwKeys.map(k=>meanStd(pwMap.get(k).map(r=>num(r,'Avg. Watts'))).std),
-        count:pwKeys.map(k=>pwMap.get(k).length)
+        mean:  pwKeys.map(k=>weightedMeanStd(pwMap.get(k)).mean),
+        std:   pwKeys.map(k=>weightedMeanStd(pwMap.get(k)).std),
+        count: pwKeys.map(k=>pwMap.get(k).length)
     };
 
     // Heart rate — all activities, ≥3/month
@@ -475,7 +494,7 @@ function renderDashboard(data, lastModified) {
 
         <div class="chart-container">
             <h2>Power Output &amp; Heart Rate Over Time (Cycling)</h2>
-            <div class="description">Left axis: avg. cycling power (W) &nbsp;|&nbsp; Right axis: avg. heart rate across all activities (bpm) &nbsp;|&nbsp; Error bars: ±1 SD</div>
+            <div class="description">Left axis: time-weighted avg. cycling power (W) &nbsp;|&nbsp; Right axis: avg. heart rate across all activities (bpm) &nbsp;|&nbsp; Error bars: ±1 SD</div>
             <canvas id="combinedChart"></canvas>
         </div>
 
