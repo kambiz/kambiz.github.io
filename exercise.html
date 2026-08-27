@@ -27,7 +27,7 @@ body {
 /* ── Stat cards ── */
 .stats-grid {
     display:grid;
-    grid-template-columns:repeat(3,1fr);
+    grid-template-columns:repeat(4,1fr);
     gap:14px;
     margin-bottom:48px;
 }
@@ -35,21 +35,30 @@ body {
 .stat-card:hover { background:#f5f5f5; }
 .stat-card .value { font-size:2em; font-weight:700; margin-bottom:5px; font-variant-numeric:tabular-nums; line-height:1.1; }
 .stat-card .label { font-size:.75em; text-transform:uppercase; letter-spacing:1.1px; color:#666; }
+.stat-card.accent { border-color:#c0392b; }
+.stat-card.accent .value { color:#c0392b; }
+
+/* ── Section dividers ── */
+.section-head { margin:56px 0 24px; padding-bottom:10px; border-bottom:2px solid #000; }
+.section-head:first-of-type { margin-top:0; }
+.section-head h2 { font-size:1.35em; font-weight:700; letter-spacing:-.3px; }
+.section-head p { font-size:.85em; color:#666; margin-top:3px; }
 
 /* ── Chart containers ── */
 .chart-container { border:1px solid #ccc; padding:24px; margin-bottom:28px; background:#fff; }
 .chart-container h2 { font-size:1.15em; font-weight:600; margin-bottom:5px; letter-spacing:-.2px; }
 .chart-container .description { color:#666; font-size:.82em; margin-bottom:16px; }
+.chart-container.feature { border:2px solid #000; }
 .two-col { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
 .three-col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:24px; }
 
-canvas { max-height:400px; }
+canvas { max-height:400px; max-width:100%; }
 
 /* ── Pie grid ── */
 .pie-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; align-items:start; }
 .pie-item { text-align:center; }
 .pie-item h3 { font-size:.95em; font-weight:600; margin-bottom:10px; color:#333; }
-.pie-item canvas { max-height:180px; }
+.pie-item canvas { max-height:180px; max-width:100%; }
 
 /* ── Insight box ── */
 .insight-box {
@@ -60,6 +69,26 @@ canvas { max-height:400px; }
     font-size:.9em;
     line-height:1.75;
 }
+.insight-box strong { font-weight:700; }
+
+/* ── Method note (explains a chart's filtering choices) ── */
+.method-note {
+    margin-top:14px; padding:10px 14px;
+    background:#f7f7f7; border-left:2px solid #999;
+    font-size:.76em; color:#555; line-height:1.6;
+}
+.method-note b { color:#000; }
+
+/* ── Takeaway strip under a feature chart ── */
+.takeaway {
+    display:flex; flex-wrap:wrap; gap:0; margin-top:18px;
+    border-top:1px solid #ddd; padding-top:14px;
+}
+.takeaway div { flex:1 1 130px; padding:0 14px; border-left:1px solid #eee; }
+.takeaway div:first-child { border-left:0; padding-left:0; }
+.takeaway .k { font-size:.68em; text-transform:uppercase; letter-spacing:1px; color:#888; }
+.takeaway .v { font-size:1.25em; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.3; }
+.takeaway .v.up { color:#c0392b; }
 
 /* ── State screens ── */
 .state-screen {
@@ -108,6 +137,8 @@ canvas { max-height:400px; }
     .pie-grid { grid-template-columns:repeat(2,1fr); gap:16px; }
     .chart-container { padding:18px 14px; }
     canvas { max-height:300px; }
+    .takeaway div { flex:1 1 50%; border-left:0; padding:6px 0; }
+    .section-head h2 { font-size:1.15em; }
 }
 </style>
 </head>
@@ -119,11 +150,32 @@ canvas { max-height:400px; }
 //  CONFIG
 // ─────────────────────────────────────────────────────────────
 const CSV_FILENAME  = 'kambizkamrani_workouts.csv';
-const CACHE_KEY     = 'peloton_cache_v8';  // v8: time-weighted avg power output
+const CACHE_KEY     = 'peloton_cache_v9';  // v9: cycling-only HR, effort-ride filtering, efficiency metrics
 const REQUIRED_COLS = [
     'Workout Timestamp','Fitness Discipline','Length (minutes)',
     'Calories Burned','Avg. Watts','Avg. Heartrate','Instructor Name'
 ];
+
+// An "effort ride" is a real training ride: ≥15 min and not a warm-up/cool-down.
+// Peloton logs 5-min warm-ups/cool-downs as full workouts; by 2026 they were 57% of
+// all logged rides at ~60W, which drags any raw average watts figure down over time
+// and hides genuine fitness gains. Every progression metric below uses this filter.
+const EFFORT_MIN_MINUTES = 15;
+const NON_EFFORT_TYPES   = ['Warm Up','Cool Down'];
+
+// Outdoor rides are logged with a heart rate but no power meter, so they arrive
+// as 0W. Left in, they drag the power average down and stack a false row of
+// points along the 0W axis of the scatter. Power metrics require watts > 0.
+
+// Ride-length buckets for the duration-controlled power chart
+const LEN_BUCKETS = [
+    { key:'20', label:'~20 min', lo:15, hi:24 },
+    { key:'30', label:'~30 min', lo:25, hi:37 },
+    { key:'45', label:'~45 min', lo:38, hi:52 },
+    { key:'60', label:'60+ min', lo:53, hi:1e9 }
+];
+const MIN_PER_BUCKET  = 3;  // monthly series: suppress a point below this many rides
+const MIN_PER_LENGTH  = 5;  // duration-split series: needs more, since it splits four ways
 
 // ─────────────────────────────────────────────────────────────
 //  PALETTE
@@ -211,6 +263,45 @@ function validateColumns(rows) {
 }
 
 // ─────────────────────────────────────────────────────────────
+//  SHARED HELPERS
+// ─────────────────────────────────────────────────────────────
+// Peloton writes resistance as "40%" — strip the sign before parsing.
+const num = (r, k) => {
+    const raw = (r[k] ?? '').toString().trim().replace('%','');
+    if (raw === '') return null;
+    const v = parseFloat(raw);
+    return isNaN(v) ? null : v;
+};
+
+function groupBy(arr, fn) {
+    const m = new Map();
+    arr.forEach(r => { const k = fn(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r); });
+    return m;
+}
+
+function meanStd(arr) {
+    const a = arr.filter(v => v !== null && v !== undefined);
+    if (!a.length) return { mean:null, std:0 };
+    const m = a.reduce((x,y)=>x+y,0) / a.length;
+    const s = a.length > 1 ? Math.sqrt(a.reduce((x,y)=>x+(y-m)**2,0)/(a.length-1)) : 0;
+    return { mean:+m.toFixed(1), std:+s.toFixed(1) };
+}
+
+// Least-squares fit over indexed points; returns y-values for a straight trend line.
+function linearTrend(values) {
+    const pts = values.map((v,i)=>[i,v]).filter(p => p[1] !== null);
+    if (pts.length < 2) return values.map(()=>null);
+    const n = pts.length;
+    const sx = pts.reduce((s,p)=>s+p[0],0), sy = pts.reduce((s,p)=>s+p[1],0);
+    const sxy = pts.reduce((s,p)=>s+p[0]*p[1],0), sxx = pts.reduce((s,p)=>s+p[0]*p[0],0);
+    const denom = n*sxx - sx*sx;
+    if (denom === 0) return values.map(()=>null);
+    const slope = (n*sxy - sx*sy) / denom;
+    const inter = (sy - slope*sx) / n;
+    return values.map((_,i)=> +(inter + slope*i).toFixed(3));
+}
+
+// ─────────────────────────────────────────────────────────────
 //  DATA PROCESSOR
 // ─────────────────────────────────────────────────────────────
 function processData(rows) {
@@ -218,50 +309,63 @@ function processData(rows) {
         .map(r => ({ ...r, ts: parseTS(r['Workout Timestamp']) }))
         .filter(r => r.ts !== null);
 
-    const num = (r, k) => { const v = parseFloat(r[k]); return isNaN(v) ? null : v; };
     const ym  = ts => `${ts.getFullYear()}-${String(ts.getMonth()+1).padStart(2,'0')}`;
     const DOW = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
     valid.forEach(r => {
         r._ym  = ym(r.ts);
         r._yr  = r.ts.getFullYear();
+        r._q   = `${r.ts.getFullYear()} Q${Math.floor(r.ts.getMonth()/3)+1}`;
+        // Half-years keep the duration-split buckets large enough to be stable
+        r._hy  = `${r.ts.getFullYear()} H${r.ts.getMonth() < 6 ? 1 : 2}`;
         r._dow = DOW[r.ts.getDay()];
     });
 
-    function groupBy(arr, fn) {
-        const m = new Map();
-        arr.forEach(r => { const k=fn(r); if(!m.has(k)) m.set(k,[]); m.get(k).push(r); });
-        return m;
-    }
-    function meanStd(arr) {
-        if (!arr.length) return { mean:null, std:0 };
-        const m = arr.reduce((a,b)=>a+b,0)/arr.length;
-        const s = arr.length>1 ? Math.sqrt(arr.reduce((a,b)=>a+(b-m)**2,0)/(arr.length-1)) : 0;
-        return { mean:+m.toFixed(1), std:+s.toFixed(1) };
-    }
+    // Years present in the data — derived, never hardcoded, so the dashboard
+    // keeps working as new years roll in.
+    const allYears = [...new Set(valid.map(r=>r._yr))].sort((a,b)=>a-b);
+    // Years with enough activity to be worth a pie of their own
+    const pieYears = allYears.filter(y => valid.filter(r=>r._yr===y).length >= 20);
 
-    // Stats
-    const totalMinutes  = valid.reduce((s,r)=>s+(num(r,'Length (minutes)')||0),0);
-    const dates         = valid.map(r=>r.ts.getTime());
-    const firstDate     = new Date(Math.min(...dates));
-    const lastDate      = new Date(Math.max(...dates));
-    const fmtDate       = d => d.toLocaleDateString('en-US',{month:'short',year:'numeric'});
+    // ── Cycling subsets ────────────────────────────────────────
+    const isCycling = r => r['Fitness Discipline'] === 'Cycling';
+    const isEffortRide = r =>
+        isCycling(r) &&
+        (num(r,'Length (minutes)') || 0) >= EFFORT_MIN_MINUTES &&
+        !NON_EFFORT_TYPES.includes((r['Type'] || '').trim());
+
+    const cyclingAll = valid.filter(isCycling);
+    // Effort rides carrying both power and HR — the basis for every progression metric
+    const effort = valid.filter(r =>
+        isEffortRide(r) &&
+        num(r,'Avg. Watts') !== null && num(r,'Avg. Watts') > 0 &&
+        num(r,'Avg. Heartrate') !== null
+    ).sort((a,b) => a.ts - b.ts);
+    const noPowerRides = valid.filter(r => isEffortRide(r) && num(r,'Avg. Watts') === 0).length;
+
+    // ── Headline stats ─────────────────────────────────────────
+    const totalMinutes = valid.reduce((s,r)=>s+(num(r,'Length (minutes)')||0),0);
+    const dates     = valid.map(r=>r.ts.getTime());
+    const firstDate = new Date(Math.min(...dates));
+    const lastDate  = new Date(Math.max(...dates));
+    const fmtDate   = d => d.toLocaleDateString('en-US',{month:'short',year:'numeric'});
 
     const stats = {
         totalWorkouts:   valid.length,
         totalCalories:   Math.round(valid.reduce((s,r)=>s+(num(r,'Calories Burned')||0),0)),
         totalHours:      +(totalMinutes/60).toFixed(1),
-        cyclingDistance: +valid
-            .filter(r=>r['Fitness Discipline']==='Cycling')
-            .reduce((s,r)=>s+(num(r,'Distance (mi)')||0),0).toFixed(1),
+        cyclingDistance: +cyclingAll.reduce((s,r)=>s+(num(r,'Distance (mi)')||0),0).toFixed(1),
         runWalkDistance: +valid
             .filter(r=>['Running','Walking'].includes(r['Fitness Discipline']))
             .reduce((s,r)=>s+(num(r,'Distance (mi)')||0),0).toFixed(1),
+        totalOutputKJ:   Math.round(cyclingAll.reduce((s,r)=>s+(num(r,'Total Output')||0),0)),
+        effortRides:     effort.length,
+        noPowerRides:    noPowerRides,
         firstDate:       fmtDate(firstDate),
         lastDate:        fmtDate(lastDate)
     };
 
-    // Disciplines
+    // ── Disciplines ────────────────────────────────────────────
     const byDisc = groupBy(valid, r=>r['Fitness Discipline']);
     const discE  = [...byDisc.entries()]
         .map(([k,v])=>({
@@ -269,7 +373,7 @@ function processData(rows) {
             calories: Math.round(v.reduce((s,r)=>s+(num(r,'Calories Burned')||0),0)),
             minutes:  Math.round(v.reduce((s,r)=>s+(num(r,'Length (minutes)')||0),0))
         }))
-        .sort((a,b)=>b.minutes-a.minutes);   // sort by TIME, not raw count
+        .sort((a,b)=>b.minutes-a.minutes);
     const disciplines = {
         labels:   discE.map(d=>d.label),
         counts:   discE.map(d=>d.count),
@@ -277,93 +381,183 @@ function processData(rows) {
         minutes:  discE.map(d=>d.minutes)
     };
 
-    // Timeline
+    // ── Timeline ───────────────────────────────────────────────
     const tlMap = new Map();
     valid.forEach(r=>tlMap.set(r._ym,(tlMap.get(r._ym)||0)+1));
     const tlKeys = [...tlMap.keys()].sort();
     const timeline = { labels:tlKeys, counts:tlKeys.map(k=>tlMap.get(k)) };
 
-    // Instructors top-10 — ranked by HOURS spent, not class count
+    // ── Instructors, top 10 by hours ───────────────────────────
     const instAgg = new Map();
     valid.forEach(r=>{
         const n=r['Instructor Name'];
         if(!n||!n.trim()) return;
         if(!instAgg.has(n)) instAgg.set(n,{classes:0,minutes:0});
-        const entry=instAgg.get(n);
-        entry.classes++;
-        entry.minutes += num(r,'Length (minutes)')||0;
+        const e=instAgg.get(n);
+        e.classes++;
+        e.minutes += num(r,'Length (minutes)')||0;
     });
-    const instTop = [...instAgg.entries()]
-        .sort((a,b)=>b[1].minutes-a[1].minutes)
-        .slice(0,10);
+    const instTop = [...instAgg.entries()].sort((a,b)=>b[1].minutes-a[1].minutes).slice(0,10);
     const instructors = {
         labels:  instTop.map(d=>d[0]),
         hours:   instTop.map(d=>+(d[1].minutes/60).toFixed(1)),
         classes: instTop.map(d=>d[1].classes)
     };
 
-    // Power output — cycling only, ≥3 rides/month, TIME-WEIGHTED average
-    // Weighted mean: Σ(watts × minutes) / Σ(minutes)
-    // Weighted std:  sqrt( Σ(minutes × (watts - μ)²) / Σ(minutes) )
-    const cyc   = valid.filter(r=>
-        r['Fitness Discipline']==='Cycling' &&
-        num(r,'Avg. Watts')!==null &&
-        num(r,'Length (minutes)')!==null &&
-        num(r,'Length (minutes)')>0
-    );
-    const pwMap  = groupBy(cyc, r=>r._ym);
-    const pwKeys = [...pwMap.keys()].sort().filter(k=>pwMap.get(k).length>=3);
+    // ═══════════════════════════════════════════════════════════
+    //  PROGRESSION METRICS  (effort rides only, cycling-only HR)
+    // ═══════════════════════════════════════════════════════════
 
-    function weightedMeanStd(rides) {
+    // 1 · Monthly power + HR + efficiency, time-weighted by ride length.
+    //     HR here is CYCLING heart rate — averaging HR across all disciplines
+    //     mixes in meditation (~67 bpm) and yoga (~86 bpm), so a growing
+    //     mindfulness habit shows up as a falling "heart rate" that has
+    //     nothing to do with cardiovascular fitness.
+    function weightedMeanStd(rides, field) {
         const totalMin = rides.reduce((s,r)=>s+(num(r,'Length (minutes)')||0),0);
-        if(totalMin===0) return {mean:null,std:0};
-        const mu = rides.reduce((s,r)=>s+(num(r,'Avg. Watts')||0)*(num(r,'Length (minutes)')||0),0) / totalMin;
+        if (totalMin === 0) return { mean:null, std:0 };
+        const mu = rides.reduce((s,r)=>s+(num(r,field)||0)*(num(r,'Length (minutes)')||0),0) / totalMin;
         const variance = rides.reduce((s,r)=>{
-            const w=num(r,'Length (minutes)')||0, x=num(r,'Avg. Watts')||0;
+            const w = num(r,'Length (minutes)')||0, x = num(r,field)||0;
             return s + w*(x-mu)**2;
         },0) / totalMin;
         return { mean:+mu.toFixed(1), std:+Math.sqrt(variance).toFixed(1) };
     }
 
-    const powerOutput = {
-        labels: pwKeys,
-        mean:  pwKeys.map(k=>weightedMeanStd(pwMap.get(k)).mean),
-        std:   pwKeys.map(k=>weightedMeanStd(pwMap.get(k)).std),
-        count: pwKeys.map(k=>pwMap.get(k).length)
+    const effMap  = groupBy(effort, r=>r._ym);
+    const effKeys = [...effMap.keys()].sort().filter(k=>effMap.get(k).length >= MIN_PER_BUCKET);
+
+    const cyclingTrend = {
+        labels:    effKeys,
+        power:     effKeys.map(k=>weightedMeanStd(effMap.get(k),'Avg. Watts').mean),
+        powerStd:  effKeys.map(k=>weightedMeanStd(effMap.get(k),'Avg. Watts').std),
+        hr:        effKeys.map(k=>weightedMeanStd(effMap.get(k),'Avg. Heartrate').mean),
+        hrStd:     effKeys.map(k=>weightedMeanStd(effMap.get(k),'Avg. Heartrate').std),
+        count:     effKeys.map(k=>effMap.get(k).length)
     };
 
-    // Heart rate — all activities, ≥3/month
-    const hrRows = valid.filter(r=>num(r,'Avg. Heartrate')!==null);
-    const hrMap2 = groupBy(hrRows, r=>r._ym);
-    const hrKeys = [...hrMap2.keys()].sort().filter(k=>hrMap2.get(k).length>=3);
-    const heartRateCombined = {
-        labels: hrKeys,
-        mean: hrKeys.map(k=>meanStd(hrMap2.get(k).map(r=>num(r,'Avg. Heartrate'))).mean),
-        std:  hrKeys.map(k=>meanStd(hrMap2.get(k).map(r=>num(r,'Avg. Heartrate'))).std),
-        count:hrKeys.map(k=>hrMap2.get(k).length)
+    // 2 · Aerobic efficiency: watts produced per heartbeat.
+    //     Computed per ride, then averaged, so it is not distorted by
+    //     dividing two separately-averaged series.
+    const efficiency = {
+        labels: effKeys,
+        value:  effKeys.map(k => {
+            const vals = effMap.get(k).map(r => num(r,'Avg. Watts')/num(r,'Avg. Heartrate'));
+            return +(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(3);
+        }),
+        count:  effKeys.map(k=>effMap.get(k).length)
     };
+    efficiency.trend = linearTrend(efficiency.value);
 
-    // Calories by discipline per month (stacked) — excludes Meditation (sparse calorie data)
-    const CAL_DISCS = ['Cycling','Yoga','Walking','Stretching','Running','Rowing','Strength','Cardio'];
-    const calMap = new Map();  // 'YYYY-MM' -> { discipline -> calories }
-    valid.forEach(r => {
-        const d = r['Fitness Discipline'];
-        if (!CAL_DISCS.includes(d)) return;
-        const cal = num(r, 'Calories Burned');
-        if (cal === null) return;
-        if (!calMap.has(r._ym)) calMap.set(r._ym, {});
-        const mo = calMap.get(r._ym);
-        mo[d] = (mo[d] || 0) + cal;
+    // 3 · Power progression held at constant ride length.
+    //     Average watts falls as ride length rises, so a shift toward shorter
+    //     rides can masquerade as a plateau. Splitting by duration removes that.
+    const qKeysAll = [...new Set(effort.map(r=>r._hy))].sort();
+    const powerByLength = { labels: qKeysAll, series: {}, counts: {} };
+    LEN_BUCKETS.forEach(b => {
+        const cells = qKeysAll.map(q => effort.filter(r =>
+            r._hy===q && num(r,'Length (minutes)')>=b.lo && num(r,'Length (minutes)')<=b.hi
+        ));
+        powerByLength.series[b.key] = cells.map(rides => rides.length < MIN_PER_LENGTH ? null
+            : +(rides.reduce((s,r)=>s+num(r,'Avg. Watts'),0)/rides.length).toFixed(1));
+        powerByLength.counts[b.key] = cells.map(rides => rides.length);
     });
-    const calMonths = [...calMap.keys()].sort();
-    const caloriesByMonth = {
-        labels: calMonths,
-        datasets: Object.fromEntries(
-            CAL_DISCS.map(d => [d, calMonths.map(m => Math.round(calMap.get(m)?.[d] || 0))])
-        )
+    // Trim leading/trailing quarters where nothing cleared the threshold
+    const hasAny = qKeysAll.map((_,i)=>LEN_BUCKETS.some(b=>powerByLength.series[b.key][i]!==null));
+    const firstI = hasAny.indexOf(true), lastI = hasAny.lastIndexOf(true);
+    if (firstI > -1) {
+        powerByLength.labels = qKeysAll.slice(firstI, lastI+1);
+        LEN_BUCKETS.forEach(b => {
+            powerByLength.series[b.key] = powerByLength.series[b.key].slice(firstI, lastI+1);
+            powerByLength.counts[b.key] = powerByLength.counts[b.key].slice(firstI, lastI+1);
+        });
+    }
+
+    // 4 · Every effort ride as a point in HR × power space, grouped by year.
+    //     Fitness gains show up as the whole cloud migrating upward: more
+    //     watts at the same heart rate.
+    const scatterYears = [...new Set(effort.map(r=>r._yr))].sort((a,b)=>a-b);
+    const powerHRScatter = {
+        years: scatterYears,
+        points: Object.fromEntries(scatterYears.map(y => [y,
+            effort.filter(r=>r._yr===y).map(r=>({
+                x:num(r,'Avg. Heartrate'), y:num(r,'Avg. Watts')
+            }))
+        ]))
     };
 
-    // Time of day histogram (hour 0–23)
+    // 5 · Same-class progression: identical class, ridden repeatedly.
+    //     The cleanest apples-to-apples comparison available — same length,
+    //     same instructor, same structure, only the rider changed.
+    const titleMap = groupBy(effort, r=>r['Title']);
+    const classProgress = [...titleMap.entries()]
+        .filter(([,v]) => v.length >= 6)
+        .map(([title,v]) => {
+            const early  = v.slice(0,3).map(r=>num(r,'Avg. Watts'));
+            const recent = v.slice(-3).map(r=>num(r,'Avg. Watts'));
+            const e = early.reduce((a,b)=>a+b,0)/early.length;
+            const l = recent.reduce((a,b)=>a+b,0)/recent.length;
+            return {
+                title,
+                rides:  v.length,
+                early:  +e.toFixed(1),
+                recent: +l.toFixed(1),
+                gain:   +(l-e).toFixed(1),
+                pct:    +((l-e)/e*100).toFixed(1),
+                best:   Math.max(...v.map(r=>num(r,'Avg. Watts')))
+            };
+        })
+        .sort((a,b)=>b.gain-a.gain)
+        .slice(0,10);
+
+    // 6 · How the power is produced: leg speed (cadence) vs gear (resistance).
+    const cadenceResistance = {
+        labels:     effKeys,
+        cadence:    effKeys.map(k=>meanStd(effMap.get(k).map(r=>num(r,'Avg. Cadence (RPM)'))).mean),
+        resistance: effKeys.map(k=>meanStd(effMap.get(k).map(r=>num(r,'Avg. Resistance'))).mean)
+    };
+
+    // 7 · Cycling power zones — effort rides only, so warm-ups don't pile
+    //     into the bottom bucket and swamp the distribution.
+    const PW_BINS   = [0,125,150,175,200,225,250,Infinity];
+    const PW_LABELS = ['< 125W','125–150W','150–175W','175–200W','200–225W','225–250W','250W+'];
+    const pwZoneCounts = Array(PW_LABELS.length).fill(0);
+    effort.forEach(r=>{
+        const w=num(r,'Avg. Watts'); if(w===null) return;
+        for(let i=0;i<PW_BINS.length-1;i++) if(w>=PW_BINS[i]&&w<PW_BINS[i+1]){ pwZoneCounts[i]++; break; }
+    });
+    const powerZones = { labels:PW_LABELS, counts:pwZoneCounts };
+
+    // 8 · Cycling HR zones — cycling only, for the same reason as above.
+    const HR_BINS   = [0,120,135,145,155,165,Infinity];
+    const HR_LABELS = ['< 120','120–135','135–145','145–155','155–165','165+'];
+    const hrZoneCounts = Array(HR_LABELS.length).fill(0);
+    effort.forEach(r=>{ const h=num(r,'Avg. Heartrate'); if(h===null) return;
+        for(let i=0;i<HR_BINS.length-1;i++) if(h>=HR_BINS[i]&&h<HR_BINS[i+1]){ hrZoneCounts[i]++; break; }
+    });
+    const hrZones = { labels:HR_LABELS, counts:hrZoneCounts };
+
+    // ── Progression summary for the headline copy ──────────────
+    function windowAvg(rides, field) {
+        const v = rides.map(r=>num(r,field)).filter(x=>x!==null);
+        return v.length ? v.reduce((a,b)=>a+b,0)/v.length : null;
+    }
+    const nWin = Math.max(10, Math.round(effort.length * 0.15));
+    const firstWin = effort.slice(0, nWin), lastWin = effort.slice(-nWin);
+    const progression = {
+        powerEarly:  Math.round(windowAvg(firstWin,'Avg. Watts')),
+        powerNow:    Math.round(windowAvg(lastWin,'Avg. Watts')),
+        hrEarly:     Math.round(windowAvg(firstWin,'Avg. Heartrate')),
+        hrNow:       Math.round(windowAvg(lastWin,'Avg. Heartrate')),
+        effEarly:    +(windowAvg(firstWin,'Avg. Watts')/windowAvg(firstWin,'Avg. Heartrate')).toFixed(2),
+        effNow:      +(windowAvg(lastWin,'Avg. Watts')/windowAvg(lastWin,'Avg. Heartrate')).toFixed(2),
+        windowSize:  nWin
+    };
+    progression.powerPct = Math.round((progression.powerNow/progression.powerEarly-1)*100);
+    progression.effPct   = Math.round((progression.effNow/progression.effEarly-1)*100);
+    progression.hrDelta  = progression.hrNow - progression.hrEarly;
+
+    // ── Volume & habit views ───────────────────────────────────
     const hourBins = Array(24).fill(0);
     valid.forEach(r => { const h = r.ts.getHours(); if (h >= 0 && h < 24) hourBins[h]++; });
     const timeOfDay = {
@@ -371,33 +565,22 @@ function processData(rows) {
         counts: hourBins
     };
 
-    // Heatmap
     const hmMap = groupBy(valid, r=>`${r._yr}-${r.ts.getMonth()+1}`);
     const heatmap = [];
-    for (const yr of [2023,2024,2025,2026])
+    for (const yr of allYears)
         for (let m=1; m<=12; m++)
             heatmap.push({ year:yr, month:m, count:(hmMap.get(`${yr}-${m}`)||[]).length });
 
-    // Activity by year — keyed by MINUTES (not count) so pies reflect time spent
     const activityByYear = {};
-    for (const yr of [2023,2024,2025,2026]) {
+    for (const yr of pieYears) {
         const yd = valid.filter(r=>r._yr===yr);
-        if (!yd.length) continue;
         const m = {};
-        yd.forEach(r=>{
-            const d  = r['Fitness Discipline'];
-            const mn = num(r,'Length (minutes)') || 0;
-            m[d] = (m[d]||0) + mn;
-        });
-        const asHours = Object.fromEntries(
-            Object.entries(m)
-                  .sort((a,b)=>b[1]-a[1])
-                  .map(([k,v])=>[k, Math.round(v)])
+        yd.forEach(r=>{ const d=r['Fitness Discipline']; m[d]=(m[d]||0)+(num(r,'Length (minutes)')||0); });
+        activityByYear[yr] = Object.fromEntries(
+            Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k,Math.round(v)])
         );
-        activityByYear[yr] = asHours;
     }
 
-    // Longest consecutive day streak
     const uniqueDates = [...new Set(valid.map(r=>r.ts.toDateString()))].map(s=>new Date(s)).sort((a,b)=>a-b);
     let longestStreak=1, curStreak=1;
     for(let i=1;i<uniqueDates.length;i++){
@@ -405,53 +588,39 @@ function processData(rows) {
         if(diff===1){ curStreak++; longestStreak=Math.max(longestStreak,curStreak); } else curStreak=1;
     }
 
-    // Cycling power zone distribution
-    const PW_BINS   = [0,100,150,175,200,225,250,Infinity];
-    const PW_LABELS = ['< 100W','100–150W','150–175W','175–200W','200–225W','225–250W','250W+'];
-    const pwZoneCounts = Array(PW_LABELS.length).fill(0);
-    valid.filter(r=>r['Fitness Discipline']==='Cycling').forEach(r=>{
-        const w=num(r,'Avg. Watts'); if(w===null) return;
-        for(let i=0;i<PW_BINS.length-1;i++) if(w>=PW_BINS[i]&&w<PW_BINS[i+1]){ pwZoneCounts[i]++; break; }
-    });
-    const powerZones = { labels:PW_LABELS, counts:pwZoneCounts };
-
-    // HR zone distribution (by session count)
-    const HR_BINS   = [0,100,120,140,160,Infinity];
-    const HR_LABELS = ['< 100 bpm','100–120 bpm','120–140 bpm','140–160 bpm','160+ bpm'];
-    const hrZoneCounts = Array(HR_LABELS.length).fill(0);
-    valid.forEach(r=>{ const h=num(r,'Avg. Heartrate'); if(h===null) return;
-        for(let i=0;i<HR_BINS.length-1;i++) if(h>=HR_BINS[i]&&h<HR_BINS[i+1]){ hrZoneCounts[i]++; break; }
-    });
-    const hrZones = { labels:HR_LABELS, counts:hrZoneCounts };
-
-    // Year-over-year total hours
-    const YOY_YEARS = [2022,2023,2024,2025,2026];
     const yoyHours = {
-        labels: YOY_YEARS.map(String),
-        hours:  YOY_YEARS.map(yr=>+( valid.filter(r=>r._yr===yr).reduce((s,r)=>s+(num(r,'Length (minutes)')||0),0)/60).toFixed(1))
+        labels: allYears.map(String),
+        hours:  allYears.map(yr=>+(valid.filter(r=>r._yr===yr)
+                    .reduce((s,r)=>s+(num(r,'Length (minutes)')||0),0)/60).toFixed(1))
     };
 
-    // Validation totals (console only)
-    console.log(`✅ Disc total:${disciplines.counts.reduce((a,b)=>a+b,0)} Timeline:${timeline.counts.reduce((a,b)=>a+b,0)} Expected:${valid.length} Streak:${longestStreak}days`);
+    console.log(`✅ ${valid.length} workouts · ${effort.length} effort rides · ` +
+                `power ${progression.powerEarly}→${progression.powerNow}W · ` +
+                `HR ${progression.hrEarly}→${progression.hrNow}bpm · ` +
+                `eff ${progression.effEarly}→${progression.effNow} W/bpm · streak ${longestStreak}d`);
 
-    return { stats, longestStreak, disciplines, timeline, instructors, powerOutput, heartRateCombined, caloriesByMonth, timeOfDay, heatmap, activityByYear, powerZones, hrZones, yoyHours };
+    return { stats, longestStreak, disciplines, timeline, instructors,
+             cyclingTrend, efficiency, powerByLength, powerHRScatter, classProgress,
+             cadenceResistance, powerZones, hrZones, progression,
+             timeOfDay, heatmap, activityByYear, yoyHours, allYears, pieYears };
 }
 
 // ─────────────────────────────────────────────────────────────
 //  RENDER
 // ─────────────────────────────────────────────────────────────
 function renderDashboard(data, lastModified) {
-    const { stats, longestStreak, disciplines, timeline, instructors, powerOutput,
-            heartRateCombined, caloriesByMonth, timeOfDay, heatmap, activityByYear,
-            powerZones, hrZones, yoyHours } = data;
+    const { stats, longestStreak, disciplines, timeline, instructors,
+            cyclingTrend, efficiency, powerByLength, powerHRScatter, classProgress,
+            cadenceResistance, powerZones, hrZones, progression,
+            timeOfDay, heatmap, activityByYear, yoyHours, allYears, pieYears } = data;
 
     const luStr = lastModified
         ? new Date(lastModified).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})
         : null;
 
-    const maxPower   = powerOutput.mean.length ? Math.max(...powerOutput.mean.filter(Boolean)) : 0;
-    const topInst    = instructors.labels[0] || '—';
-    const topInstCt  = instructors.hours[0] || 0;
+    const topInst   = instructors.labels[0] || '—';
+    const topInstCt = instructors.hours[0] || 0;
+    const bestClass = classProgress[0];
 
     app.innerHTML = `
         <div class="header">
@@ -465,37 +634,128 @@ function renderDashboard(data, lastModified) {
         <div class="stats-grid" id="statsGrid"></div>
 
         <div class="insight-box">
-            ${stats.totalWorkouts.toLocaleString()} workouts totalling ${stats.totalHours.toLocaleString()} hours since ${stats.firstDate}.
-            Cycling power has grown to ${maxPower}W+. ${topInst} leads all instructors with ${topInstCt} hrs spent.
-            Activity mix has diversified steadily each year.
+            <strong>${stats.totalWorkouts.toLocaleString()}</strong> workouts totalling
+            <strong>${stats.totalHours.toLocaleString()} hours</strong> since ${stats.firstDate}.
+            Across ${stats.effortRides.toLocaleString()} real training rides, average power rose from
+            <strong>${progression.powerEarly}W</strong> to <strong>${progression.powerNow}W</strong>
+            (<strong>+${progression.powerPct}%</strong>) while cycling heart rate moved only
+            ${progression.hrDelta >= 0 ? '+' : ''}${progression.hrDelta} bpm
+            (${progression.hrEarly} → ${progression.hrNow}) — an aerobic efficiency gain of
+            <strong>+${progression.effPct}%</strong>, from ${progression.effEarly} to
+            ${progression.effNow} watts per heartbeat.
+            ${bestClass ? `Biggest single-class jump: <strong>${bestClass.title}</strong>,
+            ${Math.round(bestClass.early)}W → ${Math.round(bestClass.recent)}W over ${bestClass.rides} rides.` : ''}
+            ${topInst} leads all instructors with ${topInstCt} hrs.
+        </div>
+
+        <!-- ═══════════ FITNESS PROGRESSION ═══════════ -->
+        <div class="section-head">
+            <h2>Fitness Progression</h2>
+            <p>Is the engine actually getting stronger? Every chart in this section uses
+               <em>effort rides only</em> — ${EFFORT_MIN_MINUTES}+ minutes, excluding warm-ups and cool-downs.</p>
+        </div>
+
+        <div class="chart-container feature">
+            <h2>Power Output &amp; Heart Rate Over Time (Cycling)</h2>
+            <div class="description">Left axis: time-weighted avg. power (W) &nbsp;|&nbsp; Right axis: avg. <b>cycling</b> heart rate (bpm) &nbsp;|&nbsp; Error bars: ±1 SD</div>
+            <canvas id="combinedChart"></canvas>
+            <div class="takeaway" id="combinedTakeaway"></div>
+            <div class="method-note">
+                <b>Two corrections vs. the earlier version of this chart.</b>
+                (1) The heart-rate line now averages <b>cycling sessions only</b>. Previously it averaged
+                every discipline, so a growing meditation habit (~67 bpm) and yoga (~86 bpm) pulled the
+                line down from ~145 to ~105 bpm — that decline was a change in what was being averaged,
+                not a change in cardiovascular fitness. Cycling heart rate has actually been broadly flat.
+                (2) Power now excludes 5-minute warm-up and cool-down rides, which by 2026 were 57% of all
+                logged rides at roughly 60W and were dragging the average down over time. Outdoor rides
+                (${stats.noPowerRides} of them) are also excluded from power figures: they record heart
+                rate but no wattage, so they land at 0W and pull the average down for no real reason.
+            </div>
+        </div>
+
+        <div class="chart-container feature">
+            <h2>Aerobic Efficiency — Watts per Heartbeat</h2>
+            <div class="description">Average watts ÷ average heart rate, computed per ride then averaged. Rising = more power for the same cardiovascular cost</div>
+            <canvas id="efficiencyChart"></canvas>
+            <div class="method-note">
+                This is the single number behind the trend you care about. Power and heart rate can each
+                drift for reasons unrelated to fitness — a harder class, a hot room, poor sleep — but their
+                <b>ratio</b> is the thing training actually moves. A flat power line paired with a falling
+                heart rate and a rising power line paired with a flat heart rate are the same underlying win,
+                and this chart scores both identically.
+            </div>
         </div>
 
         <div class="chart-container">
-            <h2>Workout Distribution by Discipline</h2>
-            <div class="description">Sized by hours spent — not number of sessions</div>
-            <canvas id="disciplineChart"></canvas>
+            <h2>Power Progression at Constant Ride Length</h2>
+            <div class="description">Average watts by half-year, split by ride duration — points shown only where a period has ${MIN_PER_LENGTH}+ rides of that length</div>
+            <canvas id="powerByLengthChart"></canvas>
+            <div class="method-note">
+                Average watts falls as rides get longer — you simply cannot hold 45 minutes at your
+                20-minute power. Ride mix has shifted markedly toward shorter sessions, so a single
+                blended average understates recent progress and can even show a false plateau.
+                Holding duration constant, <b>every length band climbs monotonically</b>: the 45-minute
+                band alone went from 131W to 204W. Half-year periods are used here rather than months
+                or quarters because splitting four ways leaves too few rides per cell to be stable.
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <h2>Every Ride in Heart Rate × Power Space</h2>
+            <div class="description">One dot per effort ride, coloured by year — watch the cloud migrate upward</div>
+            <canvas id="scatterChart"></canvas>
+            <div class="method-note">
+                Moving <b>up</b> means more power. Moving up <b>without moving right</b> means more power at
+                the same heart rate, which is the definition of an improved aerobic engine. Each year's
+                centroid is drawn as a large ringed marker so the drift is readable through the noise.
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <h2>Same Class, Stronger Rider</h2>
+            <div class="description">Classes ridden 6+ times — average of the first 3 attempts vs. the most recent 3</div>
+            <canvas id="classProgressChart"></canvas>
+            <div class="method-note">
+                The tightest possible comparison: identical class, identical length, identical instructor
+                and identical intervals. Nothing varies except the rider, so the gap between the two ends
+                of each bar is as close to a pure fitness measurement as this dataset allows.
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <h2>How the Power Gets Made — Cadence vs. Resistance</h2>
+            <div class="description">Left axis: avg. cadence (RPM) &nbsp;|&nbsp; Right axis: avg. resistance (%)</div>
+            <canvas id="cadenceChart"></canvas>
+            <div class="method-note">
+                Power is cadence × torque, so the same watts can come from spinning faster or from pushing
+                a heavier gear. Tracking both shows <em>how</em> the extra power is being produced, and
+                whether one has been quietly carrying the other.
+            </div>
         </div>
 
         <div class="two-col">
-            <div class="chart-container"><h2>Calories by Activity</h2><canvas id="caloriesChart"></canvas></div>
-            <div class="chart-container"><h2>Time Investment</h2><canvas id="timeChart"></canvas></div>
+            <div class="chart-container">
+                <h2>Cycling Power Zone Distribution</h2>
+                <div class="description">Effort rides by average watt bucket</div>
+                <canvas id="powerZoneChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <h2>Cycling Heart Rate Zone Distribution</h2>
+                <div class="description">Effort rides by average heart rate — cycling only</div>
+                <canvas id="hrZoneChart"></canvas>
+            </div>
+        </div>
+
+        <!-- ═══════════ TRAINING VOLUME & HABITS ═══════════ -->
+        <div class="section-head">
+            <h2>Training Volume &amp; Habits</h2>
+            <p>How much, how often, and what kind — across all ${stats.totalWorkouts.toLocaleString()} logged sessions.</p>
         </div>
 
         <div class="chart-container">
-            <h2>Workout Frequency Over Time</h2>
-            <canvas id="timelineChart"></canvas>
-        </div>
-
-        <div class="chart-container">
-            <h2>Top 10 Instructors by Hours</h2>
-            <div class="description">Ranked by total time spent — hover to see class count</div>
-            <canvas id="instructorChart"></canvas>
-        </div>
-
-        <div class="chart-container">
-            <h2>Power Output &amp; Heart Rate Over Time (Cycling)</h2>
-            <div class="description">Left axis: time-weighted avg. cycling power (W) &nbsp;|&nbsp; Right axis: avg. heart rate across all activities (bpm) &nbsp;|&nbsp; Error bars: ±1 SD</div>
-            <canvas id="combinedChart"></canvas>
+            <h2>Where the Time Goes</h2>
+            <div class="description">Hours spent per discipline, with session counts on the second axis</div>
+            <canvas id="disciplineChart"></canvas>
         </div>
 
         <div class="chart-container">
@@ -505,9 +765,8 @@ function renderDashboard(data, lastModified) {
         </div>
 
         <div class="chart-container">
-            <h2>Calorie Burn by Activity Over Time</h2>
-            <div class="description">Stacked monthly calories by discipline — meditation excluded (insufficient calorie data)</div>
-            <canvas id="caloriesMonthChart"></canvas>
+            <h2>Workout Frequency Over Time</h2>
+            <canvas id="timelineChart"></canvas>
         </div>
 
         <div class="two-col">
@@ -523,150 +782,66 @@ function renderDashboard(data, lastModified) {
             </div>
         </div>
 
-        <div class="two-col">
-            <div class="chart-container">
-                <h2>Cycling Power Zone Distribution</h2>
-                <div class="description">How many rides fall in each average watt bucket</div>
-                <canvas id="powerZoneChart"></canvas>
-            </div>
-            <div class="chart-container">
-                <h2>Heart Rate Zone Distribution</h2>
-                <div class="description">Sessions by average heart rate across all activities</div>
-                <canvas id="hrZoneChart"></canvas>
-            </div>
+        <div class="chart-container">
+            <h2>Monthly Workout Volume (${allYears[0]} – ${allYears[allYears.length-1]})</h2>
+            <canvas id="heatmapChart"></canvas>
         </div>
 
         <div class="chart-container">
-            <h2>Monthly Workout Volume (2023 – 2026)</h2>
-            <canvas id="heatmapChart"></canvas>
+            <h2>Top 10 Instructors by Hours</h2>
+            <div class="description">Ranked by total time spent — hover to see class count</div>
+            <canvas id="instructorChart"></canvas>
         </div>
 
         <div class="footer">Chart.js &nbsp;|&nbsp; ${luStr ? 'Data last updated: ' + luStr : 'kambiz.github.io'}</div>
     `;
 
-    // Stat cards — 6 cards, 3-col grid (wraps to 2-col on mobile)
+    // ── Stat cards ─────────────────────────────────────────────
     [
-        { v: stats.totalWorkouts.toLocaleString(),                         l: 'Total Workouts'     },
-        { v: Math.round(stats.totalHours).toLocaleString() + ' hrs',       l: 'Time Invested'      },
-        { v: Math.round(stats.totalCalories / 1000) + 'k cal',             l: 'Calories Burned'    },
-        { v: longestStreak + ' days',                                       l: 'Longest Streak'     },
-        { v: Math.round(stats.cyclingDistance / 1000 * 10) / 10 + 'k mi', l: 'Miles Cycled'       },
-        { v: Math.round(stats.runWalkDistance) + ' mi',                    l: 'Miles Run / Walked' }
+        { v: stats.totalWorkouts.toLocaleString(),                        l: 'Total Workouts'   },
+        { v: Math.round(stats.totalHours).toLocaleString() + ' hrs',      l: 'Time Invested'    },
+        { v: Math.round(stats.cyclingDistance).toLocaleString() + ' mi',  l: 'Miles Cycled'     },
+        { v: longestStreak + ' days',                                     l: 'Longest Streak'   },
+        { v: progression.powerNow + 'W',                                  l: 'Current Avg Power', a:true },
+        { v: '+' + progression.effPct + '%',                              l: 'Aerobic Efficiency', a:true },
+        { v: Math.round(stats.totalOutputKJ/1000).toLocaleString() + 'k kJ', l: 'Total Work Done' },
+        { v: Math.round(stats.totalCalories/1000) + 'k cal',              l: 'Calories Burned'  }
     ].forEach(s=>{
-        const d=document.createElement('div'); d.className='stat-card';
+        const d=document.createElement('div');
+        d.className='stat-card' + (s.a ? ' accent' : '');
         d.innerHTML=`<div class="value">${s.v}</div><div class="label">${s.l}</div>`;
         document.getElementById('statsGrid').appendChild(d);
     });
+
+    // ── Takeaway strip under the flagship chart ────────────────
+    document.getElementById('combinedTakeaway').innerHTML = `
+        <div><div class="k">Power then → now</div><div class="v up">${progression.powerEarly} → ${progression.powerNow}W</div></div>
+        <div><div class="k">Cycling HR then → now</div><div class="v">${progression.hrEarly} → ${progression.hrNow} bpm</div></div>
+        <div><div class="k">Watts per heartbeat</div><div class="v up">${progression.effEarly} → ${progression.effNow}</div></div>
+        <div><div class="k">Efficiency gain</div><div class="v up">+${progression.effPct}%</div></div>`;
 
     const SS = {
         x:{ ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
         y:{ ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} }
     };
 
-    // 1 · Discipline doughnut — slices sized by HOURS, not count
-    new Chart(document.getElementById('disciplineChart'),{
-        type:'doughnut',
-        data:{ labels:disciplines.labels, datasets:[{ data:disciplines.minutes, backgroundColor:grays, borderWidth:2, borderColor:'#fff' }] },
-        options:{ responsive:true, plugins:{
-            legend:{ position:'right', labels:{padding:14,font:{size:11},color:C.mid} },
-            tooltip:{ callbacks:{ label:ctx=>{
-                const tot=ctx.dataset.data.reduce((a,b)=>a+b,0);
-                const hrs=(ctx.parsed/60).toFixed(1);
-                return `${ctx.label}: ${hrs} hrs (${(ctx.parsed/tot*100).toFixed(1)}%)`;
-            }}}
-        }}
-    });
+    // ═══════════════════════════════════════════════════════════
+    //  FITNESS PROGRESSION CHARTS
+    // ═══════════════════════════════════════════════════════════
 
-    // 2 · Calories horizontal bar — sorted by calories descending
+    // 1 · Flagship: power + cycling HR, dual axis with ±1 SD error bars
     (()=>{
-        const paired = disciplines.labels
-            .map((l,i) => ({ l, cal: disciplines.calories[i] }))
-            .sort((a,b) => b.cal - a.cal);
-        new Chart(document.getElementById('caloriesChart'),{
-            type:'bar',
-            data:{ labels:paired.map(p=>p.l), datasets:[{ data:paired.map(p=>p.cal), backgroundColor:grays, borderWidth:0 }] },
-            options:{ indexAxis:'y', responsive:true,
-                plugins:{ legend:{display:false}, tooltip:{callbacks:{label:ctx=>`${ctx.parsed.x.toLocaleString()} cal`}} },
-                scales:{
-                    x:{ beginAtZero:true, ticks:{color:C.mid,callback:v=>(v/1000).toFixed(0)+'k'}, grid:{color:'rgba(0,0,0,0.04)'} },
-                    y:{ ticks:{color:C.mid}, grid:{display:false} }
-                }
-            }
-        });
-    })();
-
-    // 3 · Time bar — sorted by hours descending
-    (()=>{
-        const paired = disciplines.labels
-            .map((l,i) => ({ l, hrs: +(disciplines.minutes[i]/60).toFixed(1) }))
-            .sort((a,b) => b.hrs - a.hrs);
-        new Chart(document.getElementById('timeChart'),{
-            type:'bar',
-            data:{ labels:paired.map(p=>p.l), datasets:[{ data:paired.map(p=>p.hrs), backgroundColor:grays, borderWidth:0 }] },
-            options:{ responsive:true,
-                plugins:{ legend:{display:false}, tooltip:{callbacks:{label:ctx=>`${ctx.parsed.y} hrs`}} },
-                scales:{
-                    y:{ beginAtZero:true, ticks:{color:C.mid,callback:v=>v+' hrs'}, grid:{color:'rgba(0,0,0,0.04)'} },
-                    x:{ ticks:{color:C.mid}, grid:{display:false} }
-                }
-            }
-        });
-    })();
-
-    // 4 · Timeline line
-    new Chart(document.getElementById('timelineChart'),{
-        type:'line',
-        data:{ labels:timeline.labels, datasets:[{
-            label:'Workouts / month', data:timeline.counts,
-            borderColor:C.black, backgroundColor:'rgba(0,0,0,0.05)',
-            fill:true, tension:0.4, borderWidth:2,
-            pointRadius:3, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:1
-        }]},
-        options:{ responsive:true, plugins:{legend:{display:false}}, scales:SS }
-    });
-
-    // 5 · Instructors horizontal bar — sorted by HOURS, x-axis labelled
-    new Chart(document.getElementById('instructorChart'),{
-        type:'bar',
-        data:{ labels:instructors.labels, datasets:[{ data:instructors.hours, backgroundColor:grays, borderWidth:0 }] },
-        options:{ indexAxis:'y', responsive:true,
-            plugins:{
-                legend:{display:false},
-                tooltip:{ callbacks:{ label:ctx=>{
-                    const i=ctx.dataIndex;
-                    return `${ctx.parsed.x} hrs (${instructors.classes[i]} classes)`;
-                }}}
-            },
-            scales:{
-                x:{
-                    beginAtZero:true,
-                    title:{ display:true, text:'Hours spent', color:C.mid, font:{size:11} },
-                    ticks:{ color:C.mid, callback:v=>v+' hrs' },
-                    grid:{ color:'rgba(0,0,0,0.04)' }
-                },
-                y:{ ticks:{color:C.mid,font:{size:10}}, grid:{display:false} }
-            }
-        }
-    });
-
-    // 6 · Combined power + HR (dual-axis + error bars)
-    (()=>{
-        const hrIdx={};
-        heartRateCombined.labels.forEach((l,i)=>hrIdx[l]=i);
-        const hrMean = powerOutput.labels.map(l=>hrIdx[l]!==undefined?heartRateCombined.mean[hrIdx[l]]:null);
-        const hrStd  = powerOutput.labels.map(l=>hrIdx[l]!==undefined?heartRateCombined.std[hrIdx[l]]:0);
-
         new Chart(document.getElementById('combinedChart'),{
             type:'line',
-            data:{ labels:powerOutput.labels, datasets:[
+            data:{ labels:cyclingTrend.labels, datasets:[
                 {
-                    label:'Power Output (W)', data:powerOutput.mean, yAxisID:'y',
+                    label:'Power Output (W)', data:cyclingTrend.power, yAxisID:'y',
                     borderColor:C.black, backgroundColor:'rgba(0,0,0,0.05)',
                     fill:true, tension:0.4, borderWidth:2,
                     pointRadius:4, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:2
                 },
                 {
-                    label:'Heart Rate (bpm)', data:hrMean, yAxisID:'y1',
+                    label:'Cycling Heart Rate (bpm)', data:cyclingTrend.hr, yAxisID:'y1',
                     borderColor:C.red, backgroundColor:'rgba(192,57,43,0.05)',
                     fill:false, tension:0.4, borderWidth:2,
                     pointRadius:4, pointBackgroundColor:C.red, pointBorderColor:'#fff', pointBorderWidth:2
@@ -676,13 +851,16 @@ function renderDashboard(data, lastModified) {
                 responsive:true, interaction:{mode:'index',intersect:false},
                 plugins:{
                     legend:{ display:true, position:'top', labels:{color:C.mid,font:{size:11}} },
-                    tooltip:{ callbacks:{ label:ctx=>{
-                        const i=ctx.dataIndex, v=ctx.parsed.y;
-                        if(v===null) return null;
-                        return ctx.datasetIndex===0
-                            ? `Power: ${v.toFixed(1)} W ±${powerOutput.std[i].toFixed(1)} W`
-                            : `Heart Rate: ${v.toFixed(1)} bpm ±${hrStd[i].toFixed(1)} bpm`;
-                    }}}
+                    tooltip:{ callbacks:{
+                        title: items => `${items[0].label} · ${cyclingTrend.count[items[0].dataIndex]} effort rides`,
+                        label: ctx=>{
+                            const i=ctx.dataIndex, v=ctx.parsed.y;
+                            if(v===null) return null;
+                            return ctx.datasetIndex===0
+                                ? `Power: ${v.toFixed(1)} W ±${cyclingTrend.powerStd[i].toFixed(1)}`
+                                : `Cycling HR: ${v.toFixed(1)} bpm ±${cyclingTrend.hrStd[i].toFixed(1)}`;
+                        }
+                    }}
                 },
                 scales:{
                     x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
@@ -692,8 +870,8 @@ function renderDashboard(data, lastModified) {
                         ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.04)'}
                     },
                     y1:{
-                        type:'linear', position:'right', min:60, max:180,
-                        title:{display:true,text:'Heart Rate (bpm)',color:C.red},
+                        type:'linear', position:'right', min:100, max:180,
+                        title:{display:true,text:'Cycling Heart Rate (bpm)',color:C.red},
                         ticks:{color:C.red,callback:v=>v+' bpm'}, grid:{drawOnChartArea:false}
                     }
                 }
@@ -712,15 +890,296 @@ function renderDashboard(data, lastModified) {
                         ctx.restore();
                     });
                 };
-                bars(0,powerOutput.mean,powerOutput.std,'y','rgba(0,0,0,0.25)');
-                bars(1,hrMean,hrStd,'y1','rgba(192,57,43,0.3)');
+                bars(0,cyclingTrend.power,cyclingTrend.powerStd,'y','rgba(0,0,0,0.25)');
+                bars(1,cyclingTrend.hr,cyclingTrend.hrStd,'y1','rgba(192,57,43,0.3)');
             }}]
         });
     })();
 
-    // 7 · Activity-mix pies (greyscale → colour on hover)
+    // 2 · Aerobic efficiency (W/bpm) with least-squares trend
+    new Chart(document.getElementById('efficiencyChart'),{
+        type:'line',
+        data:{ labels:efficiency.labels, datasets:[
+            {
+                label:'Watts per heartbeat', data:efficiency.value,
+                borderColor:C.black, backgroundColor:'rgba(0,0,0,0.06)',
+                fill:true, tension:0.35, borderWidth:2,
+                pointRadius:3.5, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:1.5
+            },
+            {
+                label:'Trend', data:efficiency.trend,
+                borderColor:C.red, borderWidth:1.8, borderDash:[6,4],
+                fill:false, pointRadius:0, tension:0
+            }
+        ]},
+        options:{
+            responsive:true, interaction:{mode:'index',intersect:false},
+            plugins:{
+                legend:{ position:'top', labels:{color:C.mid,font:{size:11}} },
+                tooltip:{ callbacks:{
+                    title: items => `${items[0].label} · ${efficiency.count[items[0].dataIndex]} effort rides`,
+                    label: ctx => ctx.parsed.y === null ? null
+                        : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(3)} W/bpm`
+                }}
+            },
+            scales:{
+                x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                y:{ title:{display:true,text:'Watts per heartbeat',color:C.black},
+                    ticks:{color:C.mid,callback:v=>v.toFixed(2)}, grid:{color:'rgba(0,0,0,0.04)'} }
+            }
+        }
+    });
+
+    // 3 · Power progression at constant ride length
+    (()=>{
+        const lenColors = { '20':'#c0392b', '30':'#000000', '45':'#666666', '60':'#aaaaaa' };
+        const datasets = LEN_BUCKETS
+            .map(b => ({
+                label: b.label,
+                data:  powerByLength.series[b.key],
+                borderColor: lenColors[b.key],
+                backgroundColor: lenColors[b.key],
+                borderWidth: 2, tension:0.3, spanGaps:true,
+                pointRadius:3.5, pointBorderColor:'#fff', pointBorderWidth:1.5
+            }))
+            .filter(ds => ds.data.some(v => v !== null));
+
+        new Chart(document.getElementById('powerByLengthChart'),{
+            type:'line',
+            data:{ labels:powerByLength.labels, datasets },
+            options:{
+                responsive:true, interaction:{mode:'index',intersect:false},
+                plugins:{
+                    legend:{ position:'top', labels:{color:C.mid,font:{size:11},padding:14} },
+                    tooltip:{ callbacks:{ label: ctx => ctx.parsed.y === null ? null
+                        : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(0)} W ` +
+                          `(${powerByLength.counts[LEN_BUCKETS.find(b=>b.label===ctx.dataset.label).key][ctx.dataIndex]} rides)` }}
+                },
+                scales:{
+                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                    y:{ title:{display:true,text:'Average power (W)',color:C.black},
+                        ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.04)'} }
+                }
+            }
+        });
+    })();
+
+    // 4 · HR × power scatter by year, with per-year centroids
+    (()=>{
+        const yrs = powerHRScatter.years;
+        // Oldest year lightest, newest darkest+red so the drift reads at a glance
+        const colorFor = i => i === yrs.length-1 ? C.red : grays[Math.min(grays.length-1, (yrs.length-1-i)*2 + 2)];
+
+        const datasets = yrs.map((y,i)=>({
+            label: String(y),
+            data:  powerHRScatter.points[y],
+            backgroundColor: colorFor(i) + (i === yrs.length-1 ? 'cc' : '66'),
+            borderColor: 'transparent',
+            pointRadius: 3, pointHoverRadius: 5, order: 2
+        }));
+
+        // Centroid markers drawn on top
+        yrs.forEach((y,i)=>{
+            const pts = powerHRScatter.points[y];
+            if (!pts.length) return;
+            datasets.push({
+                label: `${y} avg`,
+                data: [{ x: pts.reduce((s,p)=>s+p.x,0)/pts.length,
+                         y: pts.reduce((s,p)=>s+p.y,0)/pts.length }],
+                backgroundColor: colorFor(i),
+                borderColor: '#fff', borderWidth: 2.5,
+                pointRadius: 9, pointHoverRadius: 11, order: 1
+            });
+        });
+
+        new Chart(document.getElementById('scatterChart'),{
+            type:'scatter',
+            data:{ datasets },
+            options:{
+                responsive:true,
+                plugins:{
+                    legend:{ position:'top',
+                        labels:{ color:C.mid, font:{size:11}, padding:12, usePointStyle:true,
+                                 filter: item => !item.text.includes('avg') } },
+                    tooltip:{ callbacks:{ label: ctx =>
+                        `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(0)}W @ ${ctx.parsed.x.toFixed(0)} bpm` +
+                        ` (${(ctx.parsed.y/ctx.parsed.x).toFixed(2)} W/bpm)` }}
+                },
+                scales:{
+                    x:{ title:{display:true,text:'Average heart rate (bpm)',color:C.black},
+                        ticks:{color:C.mid,callback:v=>v+' bpm'}, grid:{color:'rgba(0,0,0,0.04)'} },
+                    y:{ title:{display:true,text:'Average power (W)',color:C.black},
+                        ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.04)'} }
+                }
+            }
+        });
+    })();
+
+    // 5 · Same-class progression — floating bars from early avg to recent avg
+    (()=>{
+        // classProgress is already sorted by gain descending; Chart.js draws index 0 at
+        // the top of a horizontal axis, so no reversal — biggest gain reads first.
+        const rows = classProgress;
+        new Chart(document.getElementById('classProgressChart'),{
+            type:'bar',
+            data:{
+                labels: rows.map(c => c.title.replace(/ Ride$/,'')),
+                datasets:[{
+                    label:'First 3 rides → most recent 3',
+                    data: rows.map(c => [c.early, c.recent]),
+                    backgroundColor: C.red, borderWidth:0, borderSkipped:false,
+                    barPercentage:0.55
+                }]
+            },
+            options:{
+                indexAxis:'y', responsive:true,
+                plugins:{
+                    legend:{display:false},
+                    tooltip:{ callbacks:{ label: ctx => {
+                        const c = rows[ctx.dataIndex];
+                        return [`First 3: ${c.early}W`, `Recent 3: ${c.recent}W`,
+                                `Gain: +${c.gain}W (+${c.pct}%)`,
+                                `Best ever: ${c.best}W · ${c.rides} rides`];
+                    }}}
+                },
+                scales:{
+                    x:{ title:{display:true,text:'Average power (W)',color:C.mid,font:{size:11}},
+                        ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.04)'} },
+                    y:{ ticks:{color:C.mid,font:{size:10}}, grid:{display:false} }
+                }
+            },
+            plugins:[{ afterDatasetsDraw(chart){
+                // Dot the starting end of each bar so direction of travel is unambiguous
+                const ctx = chart.ctx, meta = chart.getDatasetMeta(0), xs = chart.scales.x;
+                meta.data.forEach((bar,i)=>{
+                    const x = xs.getPixelForValue(rows[i].early);
+                    ctx.save();
+                    ctx.fillStyle = '#fff'; ctx.strokeStyle = C.red; ctx.lineWidth = 2;
+                    ctx.beginPath(); ctx.arc(x, bar.y, 4.5, 0, Math.PI*2);
+                    ctx.fill(); ctx.stroke(); ctx.restore();
+                });
+            }}]
+        });
+    })();
+
+    // 6 · Cadence vs resistance
+    new Chart(document.getElementById('cadenceChart'),{
+        type:'line',
+        data:{ labels:cadenceResistance.labels, datasets:[
+            {
+                label:'Cadence (RPM)', data:cadenceResistance.cadence, yAxisID:'y',
+                borderColor:C.black, backgroundColor:'rgba(0,0,0,0.04)',
+                fill:false, tension:0.35, borderWidth:2,
+                pointRadius:3, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:1.5
+            },
+            {
+                label:'Resistance (%)', data:cadenceResistance.resistance, yAxisID:'y1',
+                borderColor:C.red, backgroundColor:'rgba(192,57,43,0.04)',
+                fill:false, tension:0.35, borderWidth:2, borderDash:[5,3],
+                pointRadius:3, pointBackgroundColor:C.red, pointBorderColor:'#fff', pointBorderWidth:1.5
+            }
+        ]},
+        options:{
+            responsive:true, interaction:{mode:'index',intersect:false},
+            plugins:{
+                legend:{ position:'top', labels:{color:C.mid,font:{size:11}} },
+                tooltip:{ callbacks:{ label: ctx => ctx.parsed.y === null ? null
+                    : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}` }}
+            },
+            scales:{
+                x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                y:{ position:'left', title:{display:true,text:'Cadence (RPM)',color:C.black},
+                    ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
+                y1:{ position:'right', title:{display:true,text:'Resistance (%)',color:C.red},
+                     ticks:{color:C.red,callback:v=>v+'%'}, grid:{drawOnChartArea:false} }
+            }
+        }
+    });
+
+    // 7 · Power zones — effort rides only
+    new Chart(document.getElementById('powerZoneChart'),{
+        type:'bar',
+        data:{ labels:powerZones.labels, datasets:[{
+            data:powerZones.counts,
+            backgroundColor:grays.slice(0,powerZones.labels.length),
+            borderWidth:0
+        }]},
+        options:{ responsive:true,
+            plugins:{ legend:{display:false},
+                tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} rides` }} },
+            scales:{
+                y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
+                x:{ ticks:{color:C.mid,maxRotation:30,minRotation:30}, grid:{display:false} }
+            }
+        }
+    });
+
+    // 8 · Cycling HR zones
+    new Chart(document.getElementById('hrZoneChart'),{
+        type:'bar',
+        data:{ labels:hrZones.labels, datasets:[{
+            data:hrZones.counts,
+            backgroundColor:grays.slice(0,hrZones.labels.length),
+            borderWidth:0
+        }]},
+        options:{ responsive:true,
+            plugins:{ legend:{display:false},
+                tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} rides` }} },
+            scales:{
+                y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
+                x:{ ticks:{color:C.mid,maxRotation:30,minRotation:30}, grid:{display:false} }
+            }
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    //  VOLUME & HABIT CHARTS
+    // ═══════════════════════════════════════════════════════════
+
+    // 9 · Discipline breakdown — hours (bars) + session count (line), one chart
+    //     replacing the former doughnut + calories bar + time bar trio.
+    (()=>{
+        const paired = disciplines.labels
+            .map((l,i)=>({ l, hrs:+(disciplines.minutes[i]/60).toFixed(1), n:disciplines.counts[i] }))
+            .sort((a,b)=>b.hrs-a.hrs);
+        new Chart(document.getElementById('disciplineChart'),{
+            data:{
+                labels: paired.map(p=>p.l),
+                datasets:[
+                    { type:'bar', label:'Hours', data:paired.map(p=>p.hrs), yAxisID:'y',
+                      backgroundColor:grays, borderWidth:0, order:2 },
+                    // tension 0 — these are unrelated categories, so a smoothed curve
+                    // would imply interpolation between them that doesn't exist
+                    { type:'line', label:'Sessions', data:paired.map(p=>p.n), yAxisID:'y1',
+                      borderColor:C.red, backgroundColor:C.red, borderWidth:2, tension:0,
+                      pointRadius:4, pointBackgroundColor:C.red, pointBorderColor:'#fff',
+                      pointBorderWidth:1.5, fill:false, order:1 }
+                ]
+            },
+            options:{
+                responsive:true, interaction:{mode:'index',intersect:false},
+                plugins:{
+                    legend:{ position:'top', labels:{color:C.mid,font:{size:11},usePointStyle:true} },
+                    tooltip:{ callbacks:{ label: ctx => ctx.datasetIndex===0
+                        ? `${ctx.parsed.y} hrs`
+                        : `${ctx.parsed.y.toLocaleString()} sessions` }}
+                },
+                scales:{
+                    x:{ ticks:{color:C.mid}, grid:{display:false} },
+                    y:{ beginAtZero:true, position:'left',
+                        title:{display:true,text:'Hours',color:C.black},
+                        ticks:{color:C.mid,callback:v=>v+' hrs'}, grid:{color:'rgba(0,0,0,0.04)'} },
+                    y1:{ beginAtZero:true, position:'right',
+                         title:{display:true,text:'Sessions',color:C.red},
+                         ticks:{color:C.red}, grid:{drawOnChartArea:false} }
+                }
+            }
+        });
+    })();
+
+    // 10 · Activity-mix pies (greyscale → colour on hover)
     const pieGrid=document.getElementById('pieGrid');
-    [2023,2024,2025,2026].forEach(yr=>{
+    pieYears.forEach(yr=>{
         const yd=activityByYear[yr]; if(!yd) return;
         const div=document.createElement('div'); div.className='pie-item';
         div.innerHTML=`<h3>${yr}</h3><canvas id="pie${yr}"></canvas>`;
@@ -738,83 +1197,42 @@ function renderDashboard(data, lastModified) {
                 legend:{display:false},
                 tooltip:{ callbacks:{ label:ctx=>{
                     const tot=ctx.dataset.data.reduce((a,b)=>a+b,0);
-                    const hrs=(ctx.parsed/60).toFixed(1);
-                    return `${ctx.label}: ${hrs} hrs (${(ctx.parsed/tot*100).toFixed(1)}%)`;
+                    return `${ctx.label}: ${(ctx.parsed/60).toFixed(1)} hrs (${(ctx.parsed/tot*100).toFixed(1)}%)`;
                 }}}
             }}
         });
     });
 
-    // 8 · Stacked calories by discipline per month
-    (()=>{
-        const CAL_DISCS = ['Cycling','Yoga','Walking','Stretching','Running','Rowing','Strength','Cardio'];
-        // Grayscale shades mapped to each discipline (darkest = cycling = most calories)
-        const discGrays = ['#1a1a1a','#383838','#555555','#717171','#8d8d8d','#a8a8a8','#c4c4c4','#dedede'];
-        const datasets = CAL_DISCS
-            .map((d,i) => ({
-                label: d,
-                data:  caloriesByMonth.datasets[d] || caloriesByMonth.labels.map(()=>0),
-                backgroundColor: discGrays[i],
-                borderWidth: 0,
-                stack: 'cal'
-            }))
-            .filter(ds => ds.data.some(v=>v>0));  // drop disciplines with no data
+    // 11 · Timeline
+    new Chart(document.getElementById('timelineChart'),{
+        type:'line',
+        data:{ labels:timeline.labels, datasets:[{
+            label:'Workouts / month', data:timeline.counts,
+            borderColor:C.black, backgroundColor:'rgba(0,0,0,0.05)',
+            fill:true, tension:0.4, borderWidth:2,
+            pointRadius:3, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:1
+        }]},
+        options:{ responsive:true, plugins:{legend:{display:false}},
+            scales:{ x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                     y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} } } }
+    });
 
-        new Chart(document.getElementById('caloriesMonthChart'),{
-            type:'bar',
-            data:{ labels:caloriesByMonth.labels, datasets },
-            options:{
-                responsive:true,
-                plugins:{
-                    legend:{ position:'top', labels:{color:C.mid,font:{size:10},padding:12} },
-                    tooltip:{
-                        mode:'index',
-                        callbacks:{
-                            label: ctx => {
-                                if (!ctx.parsed.y) return null;
-                                return `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()} cal`;
-                            },
-                            footer: items => {
-                                const tot = items.reduce((s,i)=>s+i.parsed.y,0);
-                                return `Total: ${tot.toLocaleString()} cal`;
-                            }
-                        }
-                    }
-                },
-                scales:{
-                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                    y:{ stacked:true, beginAtZero:true,
-                        ticks:{color:C.mid, callback:v=>v>=1000?(v/1000).toFixed(0)+'k':v},
-                        grid:{color:'rgba(0,0,0,0.04)'}
-                    }
-                }
-            }
-        });
-    })();
-
-    // 9 · Time of day histogram
+    // 12 · Time of day
     (()=>{
-        // Shade bars by period: night=lightest, midday peak=darkest
         const barColors = timeOfDay.counts.map((_,h) => {
-            if (h >= 5  && h <= 11) return '#2e2e2e';   // morning — dark
-            if (h >= 12 && h <= 17) return '#575757';   // afternoon — mid
-            if (h >= 18 && h <= 22) return '#8c8c8c';   // evening — lighter
-            return '#c4c4c4';                            // night/early — lightest
+            if (h >= 5  && h <= 11) return '#2e2e2e';
+            if (h >= 12 && h <= 17) return '#575757';
+            if (h >= 18 && h <= 22) return '#8c8c8c';
+            return '#c4c4c4';
         });
         new Chart(document.getElementById('timeOfDayChart'),{
             type:'bar',
             data:{ labels:timeOfDay.labels, datasets:[{
-                label:'Sessions',
-                data:timeOfDay.counts,
-                backgroundColor:barColors,
-                borderWidth:0
+                label:'Sessions', data:timeOfDay.counts, backgroundColor:barColors, borderWidth:0
             }]},
-            options:{
-                responsive:true,
-                plugins:{
-                    legend:{display:false},
-                    tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} sessions` }}
-                },
+            options:{ responsive:true,
+                plugins:{ legend:{display:false},
+                    tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} sessions` }} },
                 scales:{
                     x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
                     y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} }
@@ -823,7 +1241,7 @@ function renderDashboard(data, lastModified) {
         });
     })();
 
-    // 10 · Year-over-year total hours
+    // 13 · Year-over-year hours
     new Chart(document.getElementById('yoyChart'),{
         type:'bar',
         data:{ labels:yoyHours.labels, datasets:[{
@@ -833,8 +1251,7 @@ function renderDashboard(data, lastModified) {
         }]},
         options:{ responsive:true,
             plugins:{ legend:{display:false},
-                tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} hrs` }}
-            },
+                tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} hrs` }} },
             scales:{
                 y:{ beginAtZero:true, ticks:{color:C.mid, callback:v=>v+' hrs'}, grid:{color:'rgba(0,0,0,0.04)'} },
                 x:{ ticks:{color:C.mid}, grid:{display:false} }
@@ -842,61 +1259,45 @@ function renderDashboard(data, lastModified) {
         }
     });
 
-    // 11 · Cycling power zone distribution
-    new Chart(document.getElementById('powerZoneChart'),{
+    // 14 · Monthly volume by year — year list derived from the data
+    (()=>{
+        const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const byYr={};
+        allYears.forEach(y=>byYr[y]=Array(12).fill(0));
+        heatmap.forEach(r=>{ if(byYr[r.year]) byYr[r.year][r.month-1]=r.count; });
+        // Skip years with almost no data (e.g. a single trial workout years ago)
+        const shown = allYears.filter(y => byYr[y].reduce((a,b)=>a+b,0) >= 10);
+        const shades = ['#1a1a1a','#424242','#6b6b6b','#949494','#bcbcbc','#d8d8d8'];
+        new Chart(document.getElementById('heatmapChart'),{
+            type:'bar',
+            data:{ labels:months, datasets: shown.map((y,i)=>({
+                label:String(y), data:byYr[y],
+                backgroundColor: shades[Math.min(i,shades.length-1)], borderWidth:0
+            }))},
+            options:{ responsive:true,
+                plugins:{ legend:{ position:'top', labels:{color:C.mid,font:{size:11},padding:14} } },
+                scales:{
+                    x:{ ticks:{color:C.mid}, grid:{display:false} },
+                    y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} }
+                }
+            }
+        });
+    })();
+
+    // 15 · Instructors
+    new Chart(document.getElementById('instructorChart'),{
         type:'bar',
-        data:{ labels:powerZones.labels, datasets:[{
-            data:powerZones.counts,
-            backgroundColor:grays.slice(0,powerZones.labels.length),
-            borderWidth:0
-        }]},
-        options:{ responsive:true,
-            plugins:{ legend:{display:false},
-                tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} rides` }}
+        data:{ labels:instructors.labels, datasets:[{ data:instructors.hours, backgroundColor:grays, borderWidth:0 }] },
+        options:{ indexAxis:'y', responsive:true,
+            plugins:{
+                legend:{display:false},
+                tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.x} hrs (${instructors.classes[ctx.dataIndex]} classes)` }}
             },
             scales:{
-                y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
-                x:{ ticks:{color:C.mid,maxRotation:30,minRotation:30}, grid:{display:false} }
-            }
-        }
-    });
-
-    // 12 · Heart rate zone distribution
-    new Chart(document.getElementById('hrZoneChart'),{
-        type:'bar',
-        data:{ labels:hrZones.labels, datasets:[{
-            data:hrZones.counts,
-            backgroundColor:grays.slice(0,hrZones.labels.length),
-            borderWidth:0
-        }]},
-        options:{ responsive:true,
-            plugins:{ legend:{display:false},
-                tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} sessions` }}
-            },
-            scales:{
-                y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
-                x:{ ticks:{color:C.mid,maxRotation:30,minRotation:30}, grid:{display:false} }
-            }
-        }
-    });
-
-    // 13 · Monthly heatmap
-    const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const byYr={2023:Array(12).fill(0),2024:Array(12).fill(0),2025:Array(12).fill(0),2026:Array(12).fill(0)};
-    heatmap.forEach(r=>{ if(byYr[r.year]) byYr[r.year][r.month-1]=r.count; });
-    new Chart(document.getElementById('heatmapChart'),{
-        type:'bar',
-        data:{ labels:months, datasets:[
-            { label:'2023', data:byYr[2023], backgroundColor:'#1a1a1a', borderWidth:0 },
-            { label:'2024', data:byYr[2024], backgroundColor:'#575757', borderWidth:0 },
-            { label:'2025', data:byYr[2025], backgroundColor:'#8c8c8c', borderWidth:0 },
-            { label:'2026', data:byYr[2026], backgroundColor:'#bdbdbd', borderWidth:0 }
-        ]},
-        options:{ responsive:true,
-            plugins:{ legend:{ position:'top', labels:{color:C.mid,font:{size:11},padding:14} } },
-            scales:{
-                x:{ ticks:{color:C.mid}, grid:{display:false} },
-                y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} }
+                x:{ beginAtZero:true,
+                    title:{ display:true, text:'Hours spent', color:C.mid, font:{size:11} },
+                    ticks:{ color:C.mid, callback:v=>v+' hrs' }, grid:{ color:'rgba(0,0,0,0.04)' } },
+                y:{ ticks:{color:C.mid,font:{size:10}}, grid:{display:false} }
             }
         }
     });
@@ -908,7 +1309,6 @@ function renderDashboard(data, lastModified) {
 async function boot() {
     showLoading();
 
-    // ── Try to fetch the CSV ───────────────────────────────
     let csvText = null, lastModified = null;
     try {
         const res = await fetch(CSV_FILENAME, { cache:'no-store' });
@@ -916,7 +1316,6 @@ async function boot() {
         lastModified = res.headers.get('Last-Modified') || new Date().toISOString();
         csvText = await res.text();
     } catch (fetchErr) {
-        // Fall back to localStorage cache if available
         try {
             const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
             if (cached?.data) {
@@ -929,12 +1328,10 @@ async function boot() {
         return;
     }
 
-    // ── Validate columns ───────────────────────────────────
-    const rows   = parseCSV(csvText);
+    const rows    = parseCSV(csvText);
     const missing = validateColumns(rows);
     if (missing.length) { showValidationError(missing); return; }
 
-    // ── Skip re-processing if nothing changed ──────────────
     try {
         const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
         if (cached?.lastModified === lastModified && cached?.rowCount === rows.length) {
@@ -944,13 +1341,10 @@ async function boot() {
         }
     } catch (_) {}
 
-    // ── Process & cache ────────────────────────────────────
     const processed = processData(rows);
     try {
         localStorage.setItem(CACHE_KEY, JSON.stringify({
-            data: processed,
-            lastModified,
-            rowCount: rows.length,
+            data: processed, lastModified, rowCount: rows.length,
             cachedAt: new Date().toISOString()
         }));
     } catch (e) {
