@@ -55,7 +55,10 @@ body {
 canvas { max-height:400px; max-width:100%; }
 
 /* ── Pie grid ── */
-.pie-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; align-items:start; }
+/* --pie-cols is set inline from the number of qualifying years, so the grid never
+   leaves a dead cell. The tablet/mobile overrides below still win, since they set
+   grid-template-columns directly rather than the variable. */
+.pie-grid { display:grid; grid-template-columns:repeat(var(--pie-cols,4),1fr); gap:16px; align-items:start; }
 .pie-item { text-align:center; }
 .pie-item h3 { font-size:.95em; font-weight:600; margin-bottom:10px; color:#333; }
 .pie-item canvas { max-height:180px; max-width:100%; }
@@ -324,8 +327,13 @@ function processData(rows) {
     // Years present in the data — derived, never hardcoded, so the dashboard
     // keeps working as new years roll in.
     const allYears = [...new Set(valid.map(r=>r._yr))].sort((a,b)=>a-b);
-    // Years with enough activity to be worth a pie of their own
-    const pieYears = allYears.filter(y => valid.filter(r=>r._yr===y).length >= 20);
+    // Years worth a pie of their own: enough sessions to be representative, and
+    // at least two disciplines — a single-slice pie is a full circle that shows
+    // no mix at all (2023 was 100% cycling, so it earned no chart).
+    const pieYears = allYears.filter(y => {
+        const yd = valid.filter(r => r._yr === y);
+        return yd.length >= 20 && new Set(yd.map(r => r['Fitness Discipline'])).size >= 2;
+    });
 
     // ── Cycling subsets ────────────────────────────────────────
     const isCycling = r => r['Fitness Discipline'] === 'Cycling';
@@ -760,7 +768,10 @@ function renderDashboard(data, lastModified) {
 
         <div class="chart-container">
             <h2>Activity Mix by Year</h2>
-            <div class="description">Sized by hours spent — greyscale at rest, hover to reveal colour</div>
+            <div class="description">Sized by hours spent — greyscale at rest, hover to reveal colour${
+                allYears.length > pieYears.length
+                    ? ` &nbsp;|&nbsp; ${allYears.filter(y=>!pieYears.includes(y)).join(', ')} omitted: too few sessions, or a single discipline`
+                    : ''}</div>
             <div class="pie-grid" id="pieGrid"></div>
         </div>
 
@@ -1179,6 +1190,7 @@ function renderDashboard(data, lastModified) {
 
     // 10 · Activity-mix pies (greyscale → colour on hover)
     const pieGrid=document.getElementById('pieGrid');
+    pieGrid.style.setProperty('--pie-cols', Math.min(pieYears.length, 4));
     pieYears.forEach(yr=>{
         const yd=activityByYear[yr]; if(!yd) return;
         const div=document.createElement('div'); div.className='pie-item';
