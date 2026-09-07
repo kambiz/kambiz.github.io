@@ -153,7 +153,7 @@ canvas { max-height:400px; max-width:100%; }
 //  CONFIG
 // ─────────────────────────────────────────────────────────────
 const CSV_FILENAME  = 'kambizkamrani_workouts.csv';
-const CACHE_KEY     = 'peloton_cache_v10'; // v10: per-discipline sections (cycling / walking / running / rowing)
+const CACHE_KEY     = 'peloton_cache_v11'; // v11: monthly training-mix chart, partial-month handling
 const REQUIRED_COLS = [
     'Workout Timestamp','Fitness Discipline','Length (minutes)',
     'Calories Burned','Avg. Watts','Avg. Heartrate','Instructor Name'
@@ -635,11 +635,63 @@ function processData(rows) {
         minutes:  discE.map(d=>d.minutes)
     };
 
+    // ── Partial trailing month ─────────────────────────────────
+    // An export taken mid-month leaves that month with only a few days in it.
+    // Plotted next to full months it reads as a collapse in training rather than
+    // a collapse in elapsed days, so any per-month total chart drops it.
+    const lastMonthKey  = ym(lastDate);
+    const daysInLast    = new Date(lastDate.getFullYear(), lastDate.getMonth()+1, 0).getDate();
+    const partialMonth  = lastDate.getDate() < daysInLast ? lastMonthKey : null;
+    const partialNote   = partialMonth
+        ? new Date(lastDate.getFullYear(), lastDate.getMonth(), 1)
+            .toLocaleDateString('en-US',{month:'long',year:'numeric'})
+        : null;
+    const dropPartial = keys => keys.filter(k => k !== partialMonth);
+
     // ── Timeline ───────────────────────────────────────────────
     const tlMap = new Map();
     valid.forEach(r=>tlMap.set(r._ym,(tlMap.get(r._ym)||0)+1));
-    const tlKeys = [...tlMap.keys()].sort();
+    const tlKeys = dropPartial([...tlMap.keys()].sort());
     const timeline = { labels:tlKeys, counts:tlKeys.map(k=>tlMap.get(k)) };
+
+    // ── Monthly hours by discipline ────────────────────────────
+    // Shows the training mix shifting over time: how the week's hours get
+    // divided, not just how many sessions were logged.
+    const MIX_SHARE_MIN_HOURS = 5;
+    const MIX_GROUPS = [
+        { label:'Cycling',    match:['Cycling'],              color:'#000000' },
+        { label:'Walking',    match:['Walking'],              color:'#c0392b' },
+        { label:'Running',    match:['Running'],              color:'#e0573f' },
+        { label:'Rowing',     match:['Rowing'],               color:'#f0907c' },
+        { label:'Yoga',       match:['Yoga'],                 color:'#8c8c8c' },
+        { label:'Stretching', match:['Stretching'],           color:'#b4b4b4' },
+        { label:'Meditation', match:['Meditation'],           color:'#d4d4d4' },
+        { label:'Other',      match:['Strength','Cardio'],    color:'#ececec' }
+    ];
+    const mixMap = new Map();
+    valid.forEach(r => {
+        const g = MIX_GROUPS.find(x => x.match.includes(r['Fitness Discipline']));
+        if (!g) return;
+        if (!mixMap.has(r._ym)) mixMap.set(r._ym, {});
+        const mo = mixMap.get(r._ym);
+        mo[g.label] = (mo[g.label] || 0) + (num(r,'Length (minutes)') || 0)/60;
+    });
+    const mixKeys = dropPartial([...mixMap.keys()].sort());
+    const monthlyHours = {
+        labels: mixKeys,
+        groups: MIX_GROUPS.map(g => ({
+            label: g.label, color: g.color,
+            data: mixKeys.map(k => +((mixMap.get(k)?.[g.label]) || 0).toFixed(1))
+        })).filter(g => g.data.some(v => v > 0)),
+        // Cycling's share of hours, for the line drawn over the bars. A share of a
+        // near-empty month is noise — one workout reads as 100% — so months below a
+        // few hours get no point rather than a spurious extreme.
+        cyclingShare: mixKeys.map(k => {
+            const mo = mixMap.get(k) || {};
+            const tot = Object.values(mo).reduce((a,b)=>a+b,0);
+            return tot >= MIX_SHARE_MIN_HOURS ? +(100*(mo['Cycling']||0)/tot).toFixed(1) : null;
+        })
+    };
 
     // ── Instructors, top 10 by hours ───────────────────────────
     const instAgg = new Map();
@@ -744,7 +796,8 @@ function processData(rows) {
 
     return { stats, longestStreak, disciplines, timeline, instructors,
              disciplineStats, cadenceResistance, speedIncline, powerZones, hrZones,
-             timeOfDay, heatmap, activityByYear, yoyHours, allYears, pieYears };
+             timeOfDay, heatmap, activityByYear, yoyHours, allYears, pieYears,
+             monthlyHours, partialNote };
 }
 
 
@@ -1097,7 +1150,8 @@ function drawDisciplineCharts(ds) {
 function renderDashboard(data, lastModified) {
     const { stats, longestStreak, disciplines, timeline, instructors,
             disciplineStats, cadenceResistance, speedIncline, powerZones, hrZones,
-            timeOfDay, heatmap, activityByYear, yoyHours, allYears, pieYears } = data;
+            timeOfDay, heatmap, activityByYear, yoyHours, allYears, pieYears,
+            monthlyHours, partialNote } = data;
 
     // The cycling section predates the generic analyzer and reads these names
     // directly; map them across rather than rewriting eight working charts.
@@ -1316,6 +1370,20 @@ function renderDashboard(data, lastModified) {
             <h2>Where the Time Goes</h2>
             <div class="description">Hours spent per discipline, with session counts on the second axis</div>
             <canvas id="disciplineChart"></canvas>
+        </div>
+
+        <div class="chart-container feature">
+            <h2>How the Training Mix Has Shifted</h2>
+            <div class="description">Hours per month by discipline &nbsp;|&nbsp; red = walking, running, rowing &nbsp;|&nbsp; black = cycling &nbsp;|&nbsp; grey = yoga, stretching, meditation${partialNote ? ` &nbsp;|&nbsp; ${partialNote} omitted as a partial month` : ''}</div>
+            <canvas id="mixChart"></canvas>
+            <div class="method-note">
+                Bars are stacked hours, so total height is total training volume and each band is
+                its share of it. The dashed line is cycling's percentage of the month's hours, read
+                on the right axis — it falls even in months where total volume rose, which is what
+                separates a genuine change of emphasis from a quiet month on the bike.
+                ${partialNote ? `<b>${partialNote}</b> is left out: the export stops partway through it,
+                so its bar would show a collapse in elapsed days rather than in training.` : ''}
+            </div>
         </div>
 
         <div class="chart-container">
@@ -1781,6 +1849,54 @@ function renderDashboard(data, lastModified) {
             }
         });
     })();
+
+    // 9b · Monthly training mix — stacked hours + cycling's share
+    new Chart(document.getElementById('mixChart'),{
+        data:{
+            labels: monthlyHours.labels,
+            datasets: [
+                ...monthlyHours.groups.map(g => ({
+                    type:'bar', label:g.label, data:g.data,
+                    backgroundColor:g.color, borderWidth:0, stack:'hrs', yAxisID:'y', order:2
+                })),
+                {
+                    type:'line', label:'Cycling share of hours', data:monthlyHours.cyclingShare,
+                    yAxisID:'y1', borderColor:'#000', borderWidth:2, borderDash:[5,3],
+                    pointRadius:0, tension:0.3, fill:false, order:1, spanGaps:false
+                }
+            ]
+        },
+        options:{
+            responsive:true, interaction:{mode:'index',intersect:false},
+            plugins:{
+                legend:{ position:'top', labels:{color:C.mid,font:{size:10},padding:10,boxWidth:12} },
+                tooltip:{
+                    callbacks:{
+                        label: ctx => {
+                            if (ctx.parsed.y === null) return null;
+                            if (ctx.dataset.type === 'line')
+                                return `Cycling share: ${ctx.parsed.y.toFixed(0)}%`;
+                            return ctx.parsed.y ? `${ctx.dataset.label}: ${ctx.parsed.y} hrs` : null;
+                        },
+                        footer: items => {
+                            const tot = items.filter(i=>i.dataset.type!=='line')
+                                             .reduce((s,i)=>s+i.parsed.y,0);
+                            return `Total: ${tot.toFixed(1)} hrs`;
+                        }
+                    }
+                }
+            },
+            scales:{
+                x:{ stacked:true, ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                y:{ stacked:true, beginAtZero:true, position:'left',
+                    title:{display:true,text:'Hours in the month',color:C.black},
+                    ticks:{color:C.mid,callback:v=>v+' h'}, grid:{color:'rgba(0,0,0,0.04)'} },
+                y1:{ position:'right', min:0, max:100, beginAtZero:true,
+                     title:{display:true,text:'Cycling share of hours (%)',color:C.black},
+                     ticks:{color:C.mid,callback:v=>v+'%'}, grid:{drawOnChartArea:false} }
+            }
+        }
+    });
 
     // 10 · Activity-mix pies (greyscale → colour on hover)
     const pieGrid=document.getElementById('pieGrid');
