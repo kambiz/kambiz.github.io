@@ -1,0 +1,24 @@
+---
+---
+
+@import "minima";
+
+/* Publication sub-headings in CV */
+h4 {
+  font-size: 1em;
+  font-weight: 600;
+  margin-top: 0.6em;
+  margin-bottom: 0.2em;
+}
+
+/* Two-column grid used by the CV page */
+.row::after {
+  content: "";
+  display: table;
+  clear: both;
+}
+
+.column {
+  float: left;
+  width: 50%;
+}
