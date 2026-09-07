@@ -1,0 +1,22 @@
+title: Kambiz Kamrani
+description: Surgeon, scientist, and open-source enthusiast.
+url: "https://kambiz.github.io"
+baseurl: ""
+
+author:
+  name: Kambiz Kamrani
+  email: kambiz@gmail.com
+
+# Build settings
+markdown: kramdown
+theme: null
+plugins:
+  - jekyll-feed
+
+permalink: pretty
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - README.md
+  - vendor/
