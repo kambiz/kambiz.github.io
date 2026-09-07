@@ -153,31 +153,108 @@ canvas { max-height:400px; max-width:100%; }
 //  CONFIG
 // ─────────────────────────────────────────────────────────────
 const CSV_FILENAME  = 'kambizkamrani_workouts.csv';
-const CACHE_KEY     = 'peloton_cache_v9';  // v9: cycling-only HR, effort-ride filtering, efficiency metrics
+const CACHE_KEY     = 'peloton_cache_v10'; // v10: per-discipline sections (cycling / walking / running / rowing)
 const REQUIRED_COLS = [
     'Workout Timestamp','Fitness Discipline','Length (minutes)',
     'Calories Burned','Avg. Watts','Avg. Heartrate','Instructor Name'
 ];
 
-// An "effort ride" is a real training ride: ≥15 min and not a warm-up/cool-down.
-// Peloton logs 5-min warm-ups/cool-downs as full workouts; by 2026 they were 57% of
-// all logged rides at ~60W, which drags any raw average watts figure down over time
-// and hides genuine fitness gains. Every progression metric below uses this filter.
-const EFFORT_MIN_MINUTES = 15;
-const NON_EFFORT_TYPES   = ['Warm Up','Cool Down'];
+// An "effort session" is real training: long enough to count, and not a
+// warm-up/cool-down. Peloton logs 5-min warm-ups and cool-downs as full workouts;
+// by 2026 they were 57% of all logged rides at ~60W, which drags any raw average
+// down over time and hides genuine gains. The minimum length is per-discipline
+// (see DISCIPLINE_SPECS) because a 10-minute row is a session while a 10-minute
+// ride, in this data, is usually a warm-up.
+const NON_EFFORT_TYPES = ['Warm Up','Cool Down'];
 
 // Outdoor rides are logged with a heart rate but no power meter, so they arrive
 // as 0W. Left in, they drag the power average down and stack a false row of
 // points along the 0W axis of the scatter. Power metrics require watts > 0.
 
-// Ride-length buckets for the duration-controlled power chart
-const LEN_BUCKETS = [
-    { key:'20', label:'~20 min', lo:15, hi:24 },
-    { key:'30', label:'~30 min', lo:25, hi:37 },
-    { key:'45', label:'~45 min', lo:38, hi:52 },
-    { key:'60', label:'60+ min', lo:53, hi:1e9 }
-];
 const MIN_PER_BUCKET  = 3;  // monthly series: suppress a point below this many rides
+
+// ─────────────────────────────────────────────────────────────
+//  DISCIPLINE SPECS
+//  Each discipline gets the same battery of progression charts; they differ
+//  only in what counts as "performance" and what units that is measured in.
+//
+//  UNITS WARNING: Peloton labels two columns "Distance (mi)" and
+//  "Avg. Speed (mph)" for every discipline, but the ROWER writes metres and
+//  metres/second into them. Verified against distance = speed x time: the
+//  mph/miles reading is off by 100% for rowing and by <1% for everything
+//  else. Each spec therefore states its own conversion rather than assuming.
+//
+//  Performance is normalised to a per-minute rate so that dividing by heart
+//  rate (beats per minute) yields a clean per-heartbeat figure:
+//    cycling  -> watts            / bpm = watts per heartbeat
+//    others   -> metres-per-min   / bpm = metres per heartbeat
+// ─────────────────────────────────────────────────────────────
+const MI_TO_M = 1609.34;
+// Seconds per 500 m, from a pace in metres per minute — rowing's native unit.
+function splitFmt(mPerMin) {
+    const sec = 500 / (mPerMin/60);
+    return `${Math.floor(sec/60)}:${String(Math.round(sec%60)).padStart(2,'0')}`;
+}
+const DISCIPLINE_SPECS = [
+    {
+        key:'cycling', label:'Cycling', disciplines:['Cycling'],
+        perfName:'Power', perfUnit:'W', effUnit:'W/beat', effName:'Watts per heartbeat',
+        perfDigits:0, effDigits:2, minMinutes:15,
+        perfAxis:'Power (W)', toDisplay:v=>v, fmt:v=>v.toFixed(0)+'W',
+        // Outdoor rides record heart rate but no power, arriving as 0W; they would
+        // drag the average down and stack a false row of points along the 0W axis.
+        perf: r => { const w = num(r,'Avg. Watts'); return w !== null && w > 0 ? w : null; },
+        buckets:[
+            { key:'20', label:'~20 min', lo:15, hi:24 },
+            { key:'30', label:'~30 min', lo:25, hi:37 },
+            { key:'45', label:'~45 min', lo:38, hi:52 },
+            { key:'60', label:'60+ min', lo:53, hi:1e9 }
+        ]
+    },
+    {
+        key:'walking', label:'Walking & Hiking', disciplines:['Walking'],
+        perfName:'Speed', perfUnit:'m/min', effUnit:'m/beat', effName:'Metres per Heartbeat',
+        perfDigits:1, effDigits:3, minMinutes:15,
+        perfAxis:'Speed (mph)', toDisplay:v=>v*60/MI_TO_M, fmt:v=>(v*60/MI_TO_M).toFixed(2)+' mph',
+        perf: r => { const v = num(r,'Avg. Speed (mph)'); return v !== null && v > 0 ? v*MI_TO_M/60 : null; },
+        buckets:[
+            { key:'20', label:'~20 min', lo:15, hi:24 },
+            { key:'30', label:'~30 min', lo:25, hi:37 },
+            { key:'45', label:'~45 min', lo:38, hi:52 },
+            { key:'60', label:'60+ min', lo:53, hi:1e9 }
+        ]
+    },
+    {
+        key:'running', label:'Running', disciplines:['Running'],
+        perfName:'Speed', perfUnit:'m/min', effUnit:'m/beat', effName:'Metres per Heartbeat',
+        perfDigits:1, effDigits:3, minMinutes:15,
+        perfAxis:'Speed (mph)', toDisplay:v=>v*60/MI_TO_M, fmt:v=>(v*60/MI_TO_M).toFixed(2)+' mph',
+        perf: r => { const v = num(r,'Avg. Speed (mph)'); return v !== null && v > 0 ? v*MI_TO_M/60 : null; },
+        buckets:[
+            { key:'20', label:'~20 min', lo:15, hi:24 },
+            { key:'30', label:'~30 min', lo:25, hi:37 },
+            { key:'45', label:'45+ min', lo:38, hi:1e9 }
+        ]
+    },
+    {
+        key:'rowing', label:'Rowing', disciplines:['Rowing'],
+        perfName:'Pace', perfUnit:'m/min', effUnit:'m/beat', effName:'Metres per Heartbeat',
+        perfDigits:1, effDigits:3, minMinutes:10,   // 10-min rows are real sessions, not warm-ups
+        // Kept as metres/min so "up is better" holds like every other section; the
+        // 500 m split every rower actually thinks in is shown in the tooltip.
+        perfAxis:'Pace (m/min)', toDisplay:v=>v,
+        fmt:v=>`${v.toFixed(0)} m/min (${splitFmt(v)}/500m)`,
+        // Rower reports metres/second in the "mph" column — see units warning above.
+        perf: r => { const v = num(r,'Avg. Speed (mph)'); return v !== null && v > 0 ? v*60 : null; },
+        buckets:[
+            { key:'20', label:'~20 min', lo:15, hi:24 },
+            { key:'30', label:'30+ min', lo:25, hi:1e9 }
+        ]
+    }
+];
+// A discipline needs this much history before trend lines mean anything.
+const MIN_TREND_MONTHS   = 6;
+const MIN_TREND_SESSIONS = 40;
 const MIN_PER_LENGTH  = 5;  // duration-split series: needs more, since it splits four ways
 
 // ─────────────────────────────────────────────────────────────
@@ -290,6 +367,170 @@ function meanStd(arr) {
     return { mean:+m.toFixed(1), std:+s.toFixed(1) };
 }
 
+// ─────────────────────────────────────────────────────────────
+//  GENERIC DISCIPLINE ANALYZER
+//  Runs the same battery of progression metrics over any discipline, given a
+//  spec that says how to read "performance" out of a row. Returns null-ish
+//  sections rather than fabricating a trend when the data is too thin.
+// ─────────────────────────────────────────────────────────────
+function analyzeDiscipline(valid, spec) {
+    const inDiscipline = r => spec.disciplines.includes(r['Fitness Discipline']);
+
+    // A session counts only if it is a real effort (long enough, not a warm-up or
+    // cool-down) and carries both a performance figure and a heart rate.
+    const sessions = valid.filter(r =>
+        inDiscipline(r) &&
+        (num(r,'Length (minutes)') || 0) >= spec.minMinutes &&
+        !NON_EFFORT_TYPES.includes((r['Type'] || '').trim()) &&
+        spec.perf(r) !== null &&
+        num(r,'Avg. Heartrate') !== null
+    ).sort((a,b) => a.ts - b.ts);
+
+    const allInDiscipline = valid.filter(inDiscipline);
+    const out = {
+        spec, sessions,
+        totalSessions: allInDiscipline.length,
+        totalMinutes:  Math.round(allInDiscipline.reduce((s,r)=>s+(num(r,'Length (minutes)')||0),0)),
+        // Sessions dropped for want of a usable performance figure — worth stating
+        // rather than silently shrinking the denominator.
+        excluded: allInDiscipline.filter(r =>
+            (num(r,'Length (minutes)') || 0) >= spec.minMinutes &&
+            !NON_EFFORT_TYPES.includes((r['Type'] || '').trim()) &&
+            spec.perf(r) === null).length
+    };
+
+    if (!sessions.length) {
+        return { ...out, hasData:false, hasTrend:false,
+                 trend:{labels:[]}, efficiency:{labels:[]}, byLength:null,
+                 scatter:null, classProgress:[], summary:null };
+    }
+
+    // ── Monthly trend, time-weighted by session length ─────────
+    const byMonth   = groupBy(sessions, r=>r._ym);
+    const monthKeys = [...byMonth.keys()].sort().filter(k=>byMonth.get(k).length >= MIN_PER_BUCKET);
+
+    function weighted(rows, valueOf) {
+        const totalMin = rows.reduce((s,r)=>s+(num(r,'Length (minutes)')||0),0);
+        if (totalMin === 0) return { mean:null, std:0 };
+        const mu = rows.reduce((s,r)=>s+valueOf(r)*(num(r,'Length (minutes)')||0),0) / totalMin;
+        const variance = rows.reduce((s,r)=>{
+            const w = num(r,'Length (minutes)')||0;
+            return s + w*(valueOf(r)-mu)**2;
+        },0) / totalMin;
+        return { mean:+mu.toFixed(2), std:+Math.sqrt(variance).toFixed(2) };
+    }
+
+    const trend = {
+        labels: monthKeys,
+        perf:      monthKeys.map(k=>weighted(byMonth.get(k), spec.perf).mean),
+        perfStd:   monthKeys.map(k=>weighted(byMonth.get(k), spec.perf).std),
+        hr:        monthKeys.map(k=>weighted(byMonth.get(k), r=>num(r,'Avg. Heartrate')).mean),
+        hrStd:     monthKeys.map(k=>weighted(byMonth.get(k), r=>num(r,'Avg. Heartrate')).std),
+        count:     monthKeys.map(k=>byMonth.get(k).length)
+    };
+
+    // ── Efficiency: performance per heartbeat, per session then averaged ──
+    const efficiency = {
+        labels: monthKeys,
+        value:  monthKeys.map(k => {
+            const vals = byMonth.get(k).map(r => spec.perf(r)/num(r,'Avg. Heartrate'));
+            return +(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(4);
+        }),
+        count:  monthKeys.map(k=>byMonth.get(k).length)
+    };
+    efficiency.trend = linearTrend(efficiency.value);
+
+    // Enough history to draw a trend line at all?
+    const hasTrend = monthKeys.length >= MIN_TREND_MONTHS && sessions.length >= MIN_TREND_SESSIONS;
+
+    // ── Performance held at constant session length ────────────
+    const periodKeys = [...new Set(sessions.map(r=>r._hy))].sort();
+    const byLength = { labels: periodKeys, series:{}, counts:{}, buckets: spec.buckets };
+    spec.buckets.forEach(b => {
+        const cells = periodKeys.map(q => sessions.filter(r =>
+            r._hy===q && num(r,'Length (minutes)')>=b.lo && num(r,'Length (minutes)')<=b.hi
+        ));
+        byLength.series[b.key] = cells.map(rows => rows.length < MIN_PER_LENGTH ? null
+            : +(rows.reduce((s,r)=>s+spec.perf(r),0)/rows.length).toFixed(2));
+        byLength.counts[b.key] = cells.map(rows => rows.length);
+    });
+    const hasAny = periodKeys.map((_,i)=>spec.buckets.some(b=>byLength.series[b.key][i]!==null));
+    const firstI = hasAny.indexOf(true), lastI = hasAny.lastIndexOf(true);
+    if (firstI > -1) {
+        byLength.labels = periodKeys.slice(firstI, lastI+1);
+        spec.buckets.forEach(b => {
+            byLength.series[b.key] = byLength.series[b.key].slice(firstI, lastI+1);
+            byLength.counts[b.key] = byLength.counts[b.key].slice(firstI, lastI+1);
+        });
+    }
+    // Only worth drawing if at least one band has two points to join
+    byLength.usable = spec.buckets.some(b => byLength.series[b.key].filter(v=>v!==null).length >= 2);
+
+    // ── Every session in heart-rate x performance space ────────
+    const scatterYears = [...new Set(sessions.map(r=>r._yr))].sort((a,b)=>a-b);
+    const scatter = {
+        years: scatterYears,
+        points: Object.fromEntries(scatterYears.map(y => [y,
+            sessions.filter(r=>r._yr===y).map(r=>({
+                x:num(r,'Avg. Heartrate'), y:+spec.perf(r).toFixed(2)
+            }))
+        ]))
+    };
+
+    // ── Same class, repeated ───────────────────────────────────
+    const classProgress = [...groupBy(sessions, r=>r['Title']).entries()]
+        .filter(([,v]) => v.length >= 6)
+        .map(([title,v]) => {
+            const early  = v.slice(0,3).map(spec.perf);
+            const recent = v.slice(-3).map(spec.perf);
+            const e = early.reduce((a,b)=>a+b,0)/early.length;
+            const l = recent.reduce((a,b)=>a+b,0)/recent.length;
+            return { title, rides:v.length,
+                     early:+e.toFixed(2), recent:+l.toFixed(2),
+                     gain:+(l-e).toFixed(2), pct:+((l-e)/e*100).toFixed(1),
+                     best:+Math.max(...v.map(spec.perf)).toFixed(2) };
+        })
+        .sort((a,b)=>b.gain-a.gain)
+        .slice(0,10);
+
+    // ── Then-vs-now summary over the first and last 15% of sessions ──
+    const avg = (rows, valueOf) => {
+        const v = rows.map(valueOf).filter(x=>x!==null && !isNaN(x));
+        return v.length ? v.reduce((a,b)=>a+b,0)/v.length : null;
+    };
+    const nWin = Math.max(5, Math.round(sessions.length * 0.15));
+    const firstWin = sessions.slice(0, nWin), lastWin = sessions.slice(-nWin);
+    const pE = avg(firstWin, spec.perf),                    pN = avg(lastWin, spec.perf);
+    const hE = avg(firstWin, r=>num(r,'Avg. Heartrate')),   hN = avg(lastWin, r=>num(r,'Avg. Heartrate'));
+    const eE = avg(firstWin, r=>spec.perf(r)/num(r,'Avg. Heartrate'));
+    const eN = avg(lastWin,  r=>spec.perf(r)/num(r,'Avg. Heartrate'));
+    const summary = {
+        perfEarly:+pE.toFixed(spec.perfDigits), perfNow:+pN.toFixed(spec.perfDigits),
+        hrEarly:Math.round(hE),                 hrNow:Math.round(hN),
+        effEarly:+eE.toFixed(spec.effDigits),   effNow:+eN.toFixed(spec.effDigits),
+        perfPct:Math.round((pN/pE-1)*100),      effPct:Math.round((eN/eE-1)*100),
+        hrDelta:Math.round(hN-hE),              windowSize:nWin
+    };
+    // Legacy aliases so the cycling section's existing copy keeps working
+    summary.powerEarly = summary.perfEarly;
+    summary.powerNow   = summary.perfNow;
+    summary.powerPct   = summary.perfPct;
+
+    return { ...out, hasData:true, hasTrend, trend, efficiency, byLength, scatter,
+             classProgress, summary, months:monthKeys.length };
+}
+
+// Pad a value range and round the ends outward to a readable step, so an axis
+// bounded to its data still lands on round numbers rather than 78.75.
+function niceBounds(values, padFrac) {
+    const lo = Math.min(...values), hi = Math.max(...values);
+    const pad = Math.max((hi - lo) * padFrac, Math.abs(hi) * 1e-3) || 1;
+    const raw = (hi + pad) - (lo - pad);
+    const step = Math.pow(10, Math.floor(Math.log10(raw))) / 4;
+    return { lo: Math.max(0, Math.floor((lo - pad)/step)*step),
+             hi: Math.ceil((hi + pad)/step)*step };
+}
+
 // Least-squares fit over indexed points; returns y-values for a straight trend line.
 function linearTrend(values) {
     const pts = values.map((v,i)=>[i,v]).filter(p => p[1] !== null);
@@ -336,20 +577,25 @@ function processData(rows) {
     });
 
     // ── Cycling subsets ────────────────────────────────────────
-    const isCycling = r => r['Fitness Discipline'] === 'Cycling';
-    const isEffortRide = r =>
-        isCycling(r) &&
-        (num(r,'Length (minutes)') || 0) >= EFFORT_MIN_MINUTES &&
-        !NON_EFFORT_TYPES.includes((r['Type'] || '').trim());
+    // The effort-ride set itself now comes from analyzeDiscipline (below); this
+    // is just the whole-discipline slice used for lifetime distance and output.
+    const cyclingAll = valid.filter(r => r['Fitness Discipline'] === 'Cycling');
 
-    const cyclingAll = valid.filter(isCycling);
-    // Effort rides carrying both power and HR — the basis for every progression metric
-    const effort = valid.filter(r =>
-        isEffortRide(r) &&
-        num(r,'Avg. Watts') !== null && num(r,'Avg. Watts') > 0 &&
-        num(r,'Avg. Heartrate') !== null
-    ).sort((a,b) => a.ts - b.ts);
-    const noPowerRides = valid.filter(r => isEffortRide(r) && num(r,'Avg. Watts') === 0).length;
+    // ═══════════════════════════════════════════════════════════
+    //  PROGRESSION METRICS
+    //  One analyzer, run per discipline. Each discipline supplies its own
+    //  performance metric; everything downstream (trend, efficiency, split by
+    //  session length, scatter, same-class progression) is shared.
+    // ═══════════════════════════════════════════════════════════
+    const disciplineStats = {};
+    DISCIPLINE_SPECS.forEach(spec => {
+        disciplineStats[spec.key] = analyzeDiscipline(valid, spec);
+    });
+
+    // Cycling remains the reference section and keeps its own extras.
+    const cycling     = disciplineStats.cycling;
+    const effort      = cycling.sessions;
+    const progression = cycling.summary;
 
     // ── Headline stats ─────────────────────────────────────────
     const totalMinutes = valid.reduce((s,r)=>s+(num(r,'Length (minutes)')||0),0);
@@ -368,7 +614,7 @@ function processData(rows) {
             .reduce((s,r)=>s+(num(r,'Distance (mi)')||0),0).toFixed(1),
         totalOutputKJ:   Math.round(cyclingAll.reduce((s,r)=>s+(num(r,'Total Output')||0),0)),
         effortRides:     effort.length,
-        noPowerRides:    noPowerRides,
+        noPowerRides:    cycling.excluded,
         firstDate:       fmtDate(firstDate),
         lastDate:        fmtDate(lastDate)
     };
@@ -412,121 +658,30 @@ function processData(rows) {
         classes: instTop.map(d=>d[1].classes)
     };
 
-    // ═══════════════════════════════════════════════════════════
-    //  PROGRESSION METRICS  (effort rides only, cycling-only HR)
-    // ═══════════════════════════════════════════════════════════
-
-    // 1 · Monthly power + HR + efficiency, time-weighted by ride length.
-    //     HR here is CYCLING heart rate — averaging HR across all disciplines
-    //     mixes in meditation (~67 bpm) and yoga (~86 bpm), so a growing
-    //     mindfulness habit shows up as a falling "heart rate" that has
-    //     nothing to do with cardiovascular fitness.
-    function weightedMeanStd(rides, field) {
-        const totalMin = rides.reduce((s,r)=>s+(num(r,'Length (minutes)')||0),0);
-        if (totalMin === 0) return { mean:null, std:0 };
-        const mu = rides.reduce((s,r)=>s+(num(r,field)||0)*(num(r,'Length (minutes)')||0),0) / totalMin;
-        const variance = rides.reduce((s,r)=>{
-            const w = num(r,'Length (minutes)')||0, x = num(r,field)||0;
-            return s + w*(x-mu)**2;
-        },0) / totalMin;
-        return { mean:+mu.toFixed(1), std:+Math.sqrt(variance).toFixed(1) };
-    }
-
+    // How the power is produced: leg speed (cadence) vs gear (resistance).
+    // Cycling only — Peloton exports neither field for the tread or the rower.
     const effMap  = groupBy(effort, r=>r._ym);
-    const effKeys = [...effMap.keys()].sort().filter(k=>effMap.get(k).length >= MIN_PER_BUCKET);
-
-    const cyclingTrend = {
-        labels:    effKeys,
-        power:     effKeys.map(k=>weightedMeanStd(effMap.get(k),'Avg. Watts').mean),
-        powerStd:  effKeys.map(k=>weightedMeanStd(effMap.get(k),'Avg. Watts').std),
-        hr:        effKeys.map(k=>weightedMeanStd(effMap.get(k),'Avg. Heartrate').mean),
-        hrStd:     effKeys.map(k=>weightedMeanStd(effMap.get(k),'Avg. Heartrate').std),
-        count:     effKeys.map(k=>effMap.get(k).length)
-    };
-
-    // 2 · Aerobic efficiency: watts produced per heartbeat.
-    //     Computed per ride, then averaged, so it is not distorted by
-    //     dividing two separately-averaged series.
-    const efficiency = {
-        labels: effKeys,
-        value:  effKeys.map(k => {
-            const vals = effMap.get(k).map(r => num(r,'Avg. Watts')/num(r,'Avg. Heartrate'));
-            return +(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(3);
-        }),
-        count:  effKeys.map(k=>effMap.get(k).length)
-    };
-    efficiency.trend = linearTrend(efficiency.value);
-
-    // 3 · Power progression held at constant ride length.
-    //     Average watts falls as ride length rises, so a shift toward shorter
-    //     rides can masquerade as a plateau. Splitting by duration removes that.
-    const qKeysAll = [...new Set(effort.map(r=>r._hy))].sort();
-    const powerByLength = { labels: qKeysAll, series: {}, counts: {} };
-    LEN_BUCKETS.forEach(b => {
-        const cells = qKeysAll.map(q => effort.filter(r =>
-            r._hy===q && num(r,'Length (minutes)')>=b.lo && num(r,'Length (minutes)')<=b.hi
-        ));
-        powerByLength.series[b.key] = cells.map(rides => rides.length < MIN_PER_LENGTH ? null
-            : +(rides.reduce((s,r)=>s+num(r,'Avg. Watts'),0)/rides.length).toFixed(1));
-        powerByLength.counts[b.key] = cells.map(rides => rides.length);
-    });
-    // Trim leading/trailing quarters where nothing cleared the threshold
-    const hasAny = qKeysAll.map((_,i)=>LEN_BUCKETS.some(b=>powerByLength.series[b.key][i]!==null));
-    const firstI = hasAny.indexOf(true), lastI = hasAny.lastIndexOf(true);
-    if (firstI > -1) {
-        powerByLength.labels = qKeysAll.slice(firstI, lastI+1);
-        LEN_BUCKETS.forEach(b => {
-            powerByLength.series[b.key] = powerByLength.series[b.key].slice(firstI, lastI+1);
-            powerByLength.counts[b.key] = powerByLength.counts[b.key].slice(firstI, lastI+1);
-        });
-    }
-
-    // 4 · Every effort ride as a point in HR × power space, grouped by year.
-    //     Fitness gains show up as the whole cloud migrating upward: more
-    //     watts at the same heart rate.
-    const scatterYears = [...new Set(effort.map(r=>r._yr))].sort((a,b)=>a-b);
-    const powerHRScatter = {
-        years: scatterYears,
-        points: Object.fromEntries(scatterYears.map(y => [y,
-            effort.filter(r=>r._yr===y).map(r=>({
-                x:num(r,'Avg. Heartrate'), y:num(r,'Avg. Watts')
-            }))
-        ]))
-    };
-
-    // 5 · Same-class progression: identical class, ridden repeatedly.
-    //     The cleanest apples-to-apples comparison available — same length,
-    //     same instructor, same structure, only the rider changed.
-    const titleMap = groupBy(effort, r=>r['Title']);
-    const classProgress = [...titleMap.entries()]
-        .filter(([,v]) => v.length >= 6)
-        .map(([title,v]) => {
-            const early  = v.slice(0,3).map(r=>num(r,'Avg. Watts'));
-            const recent = v.slice(-3).map(r=>num(r,'Avg. Watts'));
-            const e = early.reduce((a,b)=>a+b,0)/early.length;
-            const l = recent.reduce((a,b)=>a+b,0)/recent.length;
-            return {
-                title,
-                rides:  v.length,
-                early:  +e.toFixed(1),
-                recent: +l.toFixed(1),
-                gain:   +(l-e).toFixed(1),
-                pct:    +((l-e)/e*100).toFixed(1),
-                best:   Math.max(...v.map(r=>num(r,'Avg. Watts')))
-            };
-        })
-        .sort((a,b)=>b.gain-a.gain)
-        .slice(0,10);
-
-    // 6 · How the power is produced: leg speed (cadence) vs gear (resistance).
+    const effKeys = cycling.trend.labels;
     const cadenceResistance = {
         labels:     effKeys,
         cadence:    effKeys.map(k=>meanStd(effMap.get(k).map(r=>num(r,'Avg. Cadence (RPM)'))).mean),
         resistance: effKeys.map(k=>meanStd(effMap.get(k).map(r=>num(r,'Avg. Resistance'))).mean)
     };
 
-    // 7 · Cycling power zones — effort rides only, so warm-ups don't pile
-    //     into the bottom bucket and swamp the distribution.
+    // Running's closest analogue to cadence-vs-resistance: how fast versus how
+    // steep. Incline is exported for runs (and only for runs), so pace changes
+    // can be read against the grade they were run at.
+    const runSessions = disciplineStats.running.sessions;
+    const runMap  = groupBy(runSessions, r=>r._ym);
+    const runKeys = disciplineStats.running.trend.labels;
+    const speedIncline = {
+        labels:  runKeys,
+        speed:   runKeys.map(k=>meanStd(runMap.get(k).map(r=>num(r,'Avg. Speed (mph)'))).mean),
+        incline: runKeys.map(k=>meanStd(runMap.get(k).map(r=>num(r,'Avg. Incline'))).mean)
+    };
+
+    // Cycling power zones — effort rides only, so warm-ups don't pile
+    // into the bottom bucket and swamp the distribution.
     const PW_BINS   = [0,125,150,175,200,225,250,Infinity];
     const PW_LABELS = ['< 125W','125–150W','150–175W','175–200W','200–225W','225–250W','250W+'];
     const pwZoneCounts = Array(PW_LABELS.length).fill(0);
@@ -536,7 +691,7 @@ function processData(rows) {
     });
     const powerZones = { labels:PW_LABELS, counts:pwZoneCounts };
 
-    // 8 · Cycling HR zones — cycling only, for the same reason as above.
+    // Cycling HR zones — cycling only, for the same reason as above.
     const HR_BINS   = [0,120,135,145,155,165,Infinity];
     const HR_LABELS = ['< 120','120–135','135–145','145–155','155–165','165+'];
     const hrZoneCounts = Array(HR_LABELS.length).fill(0);
@@ -544,26 +699,6 @@ function processData(rows) {
         for(let i=0;i<HR_BINS.length-1;i++) if(h>=HR_BINS[i]&&h<HR_BINS[i+1]){ hrZoneCounts[i]++; break; }
     });
     const hrZones = { labels:HR_LABELS, counts:hrZoneCounts };
-
-    // ── Progression summary for the headline copy ──────────────
-    function windowAvg(rides, field) {
-        const v = rides.map(r=>num(r,field)).filter(x=>x!==null);
-        return v.length ? v.reduce((a,b)=>a+b,0)/v.length : null;
-    }
-    const nWin = Math.max(10, Math.round(effort.length * 0.15));
-    const firstWin = effort.slice(0, nWin), lastWin = effort.slice(-nWin);
-    const progression = {
-        powerEarly:  Math.round(windowAvg(firstWin,'Avg. Watts')),
-        powerNow:    Math.round(windowAvg(lastWin,'Avg. Watts')),
-        hrEarly:     Math.round(windowAvg(firstWin,'Avg. Heartrate')),
-        hrNow:       Math.round(windowAvg(lastWin,'Avg. Heartrate')),
-        effEarly:    +(windowAvg(firstWin,'Avg. Watts')/windowAvg(firstWin,'Avg. Heartrate')).toFixed(2),
-        effNow:      +(windowAvg(lastWin,'Avg. Watts')/windowAvg(lastWin,'Avg. Heartrate')).toFixed(2),
-        windowSize:  nWin
-    };
-    progression.powerPct = Math.round((progression.powerNow/progression.powerEarly-1)*100);
-    progression.effPct   = Math.round((progression.effNow/progression.effEarly-1)*100);
-    progression.hrDelta  = progression.hrNow - progression.hrEarly;
 
     // ── Volume & habit views ───────────────────────────────────
     const hourBins = Array(24).fill(0);
@@ -608,9 +743,352 @@ function processData(rows) {
                 `eff ${progression.effEarly}→${progression.effNow} W/bpm · streak ${longestStreak}d`);
 
     return { stats, longestStreak, disciplines, timeline, instructors,
-             cyclingTrend, efficiency, powerByLength, powerHRScatter, classProgress,
-             cadenceResistance, powerZones, hrZones, progression,
+             disciplineStats, cadenceResistance, speedIncline, powerZones, hrZones,
              timeOfDay, heatmap, activityByYear, yoyHours, allYears, pieYears };
+}
+
+
+// ─────────────────────────────────────────────────────────────
+//  GENERIC DISCIPLINE SECTION
+//  Cycling keeps its own bespoke charts below (they carry extras no other
+//  discipline has data for). Walking, running and rowing share this renderer,
+//  which emits only the charts their data can actually support.
+// ─────────────────────────────────────────────────────────────
+function disciplineSectionHTML(ds, notes) {
+    const k = ds.spec.key, S = ds.spec, sum = ds.summary;
+    if (!ds.hasData) {
+        return `
+        <div class="section-head">
+            <h2>${S.label}</h2>
+            <p>No sessions yet carry both a ${S.perfName.toLowerCase()} figure and a heart rate.</p>
+        </div>`;
+    }
+
+    const hrWord = sum.hrDelta === 0 ? 'at an unchanged average heart rate'
+                 : sum.hrDelta  <  0 ? `while average heart rate <em>fell</em> ${Math.abs(sum.hrDelta)} bpm`
+                 : `while average heart rate rose ${sum.hrDelta} bpm`;
+
+    let html = `
+        <div class="section-head">
+            <h2>${S.label}</h2>
+            <p>${ds.sessions.length} effort sessions of ${S.minMinutes}+ minutes
+               (${ds.totalSessions} logged in total, warm-ups and cool-downs excluded)
+               &nbsp;|&nbsp; ${Math.round(ds.totalMinutes/60)} hours all-in</p>
+        </div>`;
+
+    // Thin-data disciplines get a plain statement instead of trend lines drawn
+    // through too few points to mean anything.
+    if (!ds.hasTrend) {
+        html += `
+        <div class="insight-box">
+            <strong>Not enough history yet for trend lines.</strong>
+            ${S.label} has ${ds.sessions.length} qualifying sessions across ${ds.months}
+            month${ds.months===1?'':'s'} with enough volume to average — below the
+            ${MIN_TREND_SESSIONS}-session, ${MIN_TREND_MONTHS}-month bar the other sections clear.
+            The scatter below shows every session honestly; the month-by-month charts
+            will appear on their own once the history is there.
+        </div>`;
+    }
+
+    if (ds.hasTrend) {
+        html += `
+        <div class="chart-container feature">
+            <h2>${S.perfName} &amp; Heart Rate Over Time (${S.label})</h2>
+            <div class="description">Left axis: time-weighted avg. ${S.perfName.toLowerCase()} &nbsp;|&nbsp; Right axis: avg. heart rate for this discipline only &nbsp;|&nbsp; Error bars: ±1 SD</div>
+            <canvas id="${k}TrendChart"></canvas>
+            <div class="takeaway" id="${k}Takeaway"></div>
+            ${notes.trend ? `<div class="method-note">${notes.trend}</div>` : ''}
+        </div>
+
+        <div class="chart-container feature">
+            <h2>Aerobic Efficiency — ${S.effName} (${S.label})</h2>
+            <div class="description">${S.perfName} ÷ heart rate, computed per session then averaged. Rising = more ${S.perfName.toLowerCase()} for the same cardiovascular cost</div>
+            <canvas id="${k}EffChart"></canvas>
+            <div class="method-note">
+                ${S.label} covered ${sum.perfPct >= 0 ? 'a' : 'a'} ${Math.abs(sum.perfPct)}%
+                ${sum.perfPct >= 0 ? 'gain' : 'drop'} in ${S.perfName.toLowerCase()}
+                (${S.fmt(sum.perfEarly)} → ${S.fmt(sum.perfNow)}) ${hrWord}
+                (${sum.hrEarly} → ${sum.hrNow} bpm), for an efficiency change of
+                <b>${sum.effPct >= 0 ? '+' : ''}${sum.effPct}%</b>.
+                Comparison is the first ${sum.windowSize} qualifying sessions against the most recent ${sum.windowSize}.
+            </div>
+        </div>`;
+    }
+
+    if (ds.byLength && ds.byLength.usable) {
+        html += `
+        <div class="chart-container">
+            <h2>${S.perfName} Progression at Constant Session Length (${S.label})</h2>
+            <div class="description">Average ${S.perfName.toLowerCase()} by half-year, split by session duration — points shown only where a period has ${MIN_PER_LENGTH}+ sessions of that length</div>
+            <canvas id="${k}LengthChart"></canvas>
+            ${notes.length ? `<div class="method-note">${notes.length}</div>` : ''}
+        </div>`;
+    }
+
+    html += `
+        <div class="chart-container">
+            <h2>Every Session in Heart Rate × ${S.perfName} Space (${S.label})</h2>
+            <div class="description">One dot per effort session, coloured by year — up and to the left is fitter</div>
+            <canvas id="${k}ScatterChart"></canvas>
+            ${notes.scatter ? `<div class="method-note">${notes.scatter}</div>` : ''}
+        </div>`;
+
+    // One or two repeated classes is a data point, not a chart.
+    if (ds.classProgress.length >= 3) {
+        html += `
+        <div class="chart-container">
+            <h2>Same Class, Stronger Athlete (${S.label})</h2>
+            <div class="description">Classes done 6+ times — average of the first 3 attempts vs. the most recent 3</div>
+            <canvas id="${k}ClassChart"></canvas>
+            ${notes.klass ? `<div class="method-note">${notes.klass}</div>` : ''}
+        </div>`;
+    } else if (ds.classProgress.length) {
+        const c = ds.classProgress[0];
+        html += `
+        <div class="chart-container">
+            <h2>Same Class, Stronger Athlete (${S.label})</h2>
+            <div class="description">Needs several classes repeated 6+ times to make a chart — so far only ${ds.classProgress.length} qualifies</div>
+            <div class="method-note">
+                <b>${c.title}</b>, done ${c.rides} times: first three averaged ${S.fmt(c.early)},
+                most recent three ${S.fmt(c.recent)} — a change of
+                ${c.pct >= 0 ? '+' : ''}${c.pct}%. Best single effort: ${S.fmt(c.best)}.
+            </div>
+        </div>`;
+    }
+    return html;
+}
+
+function drawDisciplineCharts(ds) {
+    if (!ds.hasData) return;
+    const k = ds.spec.key, S = ds.spec, D = S.toDisplay;
+
+    // ── Performance + heart rate, dual axis with ±1 SD bars ────
+    if (ds.hasTrend) {
+        const t = ds.trend, disp = t.perf.map(v => v===null?null:D(v));
+        const dispStd = t.perf.map((v,i) => v===null?0:D(v+t.perfStd[i])-D(v));
+        const hrLo = Math.max(60, Math.floor((Math.min(...t.hr.filter(v=>v!==null))-25)/10)*10);
+        const hrHi = Math.ceil((Math.max(...t.hr.filter(v=>v!==null))+25)/10)*10;
+        new Chart(document.getElementById(`${k}TrendChart`),{
+            type:'line',
+            data:{ labels:t.labels, datasets:[
+                { label:`${S.perfName} (${S.perfAxis.replace(/.*\(|\)/g,'')})`, data:disp, yAxisID:'y',
+                  borderColor:C.black, backgroundColor:'rgba(0,0,0,0.05)',
+                  fill:true, tension:0.4, borderWidth:2,
+                  pointRadius:4, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:2 },
+                { label:'Heart Rate (bpm)', data:t.hr, yAxisID:'y1',
+                  borderColor:C.red, backgroundColor:'rgba(192,57,43,0.05)',
+                  fill:false, tension:0.4, borderWidth:2,
+                  pointRadius:4, pointBackgroundColor:C.red, pointBorderColor:'#fff', pointBorderWidth:2 }
+            ]},
+            options:{
+                responsive:true, interaction:{mode:'index',intersect:false},
+                plugins:{
+                    legend:{ position:'top', labels:{color:C.mid,font:{size:11}} },
+                    tooltip:{ callbacks:{
+                        title: items => `${items[0].label} · ${t.count[items[0].dataIndex]} sessions`,
+                        label: ctx => {
+                            const i=ctx.dataIndex, v=ctx.parsed.y;
+                            if (v===null) return null;
+                            return ctx.datasetIndex===0
+                                ? `${S.perfName}: ${S.fmt(t.perf[i])}`
+                                : `Heart rate: ${v.toFixed(1)} bpm ±${t.hrStd[i].toFixed(1)}`;
+                        }
+                    }}
+                },
+                scales:{
+                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                    y:{ type:'linear', position:'left',
+                        title:{display:true,text:S.perfAxis,color:C.black},
+                        ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
+                    y1:{ type:'linear', position:'right', min:hrLo, max:hrHi,
+                         title:{display:true,text:'Heart Rate (bpm)',color:C.red},
+                         ticks:{color:C.red,callback:v=>v+' bpm'}, grid:{drawOnChartArea:false} }
+                }
+            },
+            plugins:[{ afterDatasetsDraw(chart){
+                const ctx=chart.ctx;
+                const bars=(mi,means,stds,scaleId,color)=>{
+                    const meta=chart.getDatasetMeta(mi), ys=chart.scales[scaleId];
+                    meta.data.forEach((pt,i)=>{
+                        if(means[i]===null) return;
+                        const x=pt.x, yT=ys.getPixelForValue(means[i]+stds[i]), yB=ys.getPixelForValue(means[i]-stds[i]);
+                        ctx.save(); ctx.strokeStyle=color; ctx.lineWidth=1.2;
+                        [[x,yT,x,yB],[x-3,yT,x+3,yT],[x-3,yB,x+3,yB]].forEach(([x1,y1,x2,y2])=>{
+                            ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+                        });
+                        ctx.restore();
+                    });
+                };
+                bars(0,disp,dispStd,'y','rgba(0,0,0,0.25)');
+                bars(1,ds.trend.hr,ds.trend.hrStd,'y1','rgba(192,57,43,0.3)');
+            }}]
+        });
+
+        // ── Takeaway strip ─────────────────────────────────────
+        const el = document.getElementById(`${k}Takeaway`);
+        const sum = ds.summary;
+        el.innerHTML = `
+            <div><div class="k">${S.perfName} then → now</div><div class="v ${sum.perfPct>=0?'up':''}">${S.fmt(sum.perfEarly)} → ${S.fmt(sum.perfNow)}</div></div>
+            <div><div class="k">Heart rate then → now</div><div class="v">${sum.hrEarly} → ${sum.hrNow} bpm</div></div>
+            <div><div class="k">${S.effName}</div><div class="v ${sum.effPct>=0?'up':''}">${sum.effEarly} → ${sum.effNow}</div></div>
+            <div><div class="k">Efficiency change</div><div class="v ${sum.effPct>=0?'up':''}">${sum.effPct>=0?'+':''}${sum.effPct}%</div></div>`;
+
+        // ── Efficiency with least-squares trend ────────────────
+        new Chart(document.getElementById(`${k}EffChart`),{
+            type:'line',
+            data:{ labels:ds.efficiency.labels, datasets:[
+                { label:S.effName, data:ds.efficiency.value,
+                  borderColor:C.black, backgroundColor:'rgba(0,0,0,0.06)',
+                  fill:true, tension:0.35, borderWidth:2,
+                  pointRadius:3.5, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:1.5 },
+                { label:'Trend', data:ds.efficiency.trend,
+                  borderColor:C.red, borderWidth:1.8, borderDash:[6,4],
+                  fill:false, pointRadius:0, tension:0 }
+            ]},
+            options:{
+                responsive:true, interaction:{mode:'index',intersect:false},
+                plugins:{
+                    legend:{ position:'top', labels:{color:C.mid,font:{size:11}} },
+                    tooltip:{ callbacks:{
+                        title: items => `${items[0].label} · ${ds.efficiency.count[items[0].dataIndex]} sessions`,
+                        label: ctx => ctx.parsed.y===null ? null
+                            : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(3)} ${S.effUnit}`
+                    }}
+                },
+                scales:{
+                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                    y:{ title:{display:true,text:S.effName,color:C.black},
+                        ticks:{color:C.mid,callback:v=>v.toFixed(2)}, grid:{color:'rgba(0,0,0,0.04)'} }
+                }
+            }
+        });
+    }
+
+    // ── Performance at constant session length ─────────────────
+    if (ds.byLength && ds.byLength.usable) {
+        const lenColors = ['#c0392b','#000000','#666666','#aaaaaa'];
+        const datasets = ds.byLength.buckets
+            .map((b,i) => ({
+                label: b.label,
+                data:  ds.byLength.series[b.key].map(v => v===null?null:D(v)),
+                raw:   ds.byLength.series[b.key],
+                borderColor: lenColors[i % lenColors.length],
+                backgroundColor: lenColors[i % lenColors.length],
+                borderWidth:2, tension:0.3, spanGaps:true,
+                pointRadius:3.5, pointBorderColor:'#fff', pointBorderWidth:1.5
+            }))
+            .filter(d => d.data.some(v => v !== null));
+        new Chart(document.getElementById(`${k}LengthChart`),{
+            type:'line',
+            data:{ labels:ds.byLength.labels, datasets },
+            options:{
+                responsive:true, interaction:{mode:'index',intersect:false},
+                plugins:{
+                    legend:{ position:'top', labels:{color:C.mid,font:{size:11},padding:14} },
+                    tooltip:{ callbacks:{ label: ctx => {
+                        if (ctx.parsed.y === null) return null;
+                        const b = ds.byLength.buckets.find(x=>x.label===ctx.dataset.label);
+                        return `${ctx.dataset.label}: ${S.fmt(ctx.dataset.raw[ctx.dataIndex])} (${ds.byLength.counts[b.key][ctx.dataIndex]} sessions)`;
+                    }}}
+                },
+                scales:{
+                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                    y:{ title:{display:true,text:S.perfAxis,color:C.black},
+                        ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} }
+                }
+            }
+        });
+    }
+
+    // ── Heart rate × performance scatter, with per-year centroids ──
+    (()=>{
+        const yrs = ds.scatter.years;
+        const colorFor = i => i === yrs.length-1 ? C.red
+            : grays[Math.min(grays.length-1, (yrs.length-1-i)*2 + 2)];
+        const datasets = yrs.map((y,i)=>({
+            label: String(y),
+            data: ds.scatter.points[y].map(p=>({x:p.x, y:D(p.y), raw:p.y})),
+            backgroundColor: colorFor(i) + (i === yrs.length-1 ? 'cc' : '66'),
+            borderColor:'transparent', pointRadius:3, pointHoverRadius:5, order:2
+        }));
+        yrs.forEach((y,i)=>{
+            const pts = ds.scatter.points[y];
+            if (!pts.length) return;
+            datasets.push({
+                label:`${y} avg`,
+                data:[{ x: pts.reduce((s,p)=>s+p.x,0)/pts.length,
+                        y: D(pts.reduce((s,p)=>s+p.y,0)/pts.length) }],
+                backgroundColor: colorFor(i), borderColor:'#fff', borderWidth:2.5,
+                pointRadius:9, pointHoverRadius:11, order:1
+            });
+        });
+        new Chart(document.getElementById(`${k}ScatterChart`),{
+            type:'scatter',
+            data:{ datasets },
+            options:{
+                responsive:true,
+                plugins:{
+                    legend:{ position:'top', labels:{color:C.mid,font:{size:11},padding:12,
+                             usePointStyle:true, filter:item=>!item.text.includes('avg')} },
+                    tooltip:{ callbacks:{ label: ctx =>
+                        `${ctx.dataset.label}: ${S.fmt(ctx.raw.raw ?? ctx.parsed.y)} @ ${ctx.parsed.x.toFixed(0)} bpm` }}
+                },
+                scales:{
+                    x:{ title:{display:true,text:'Average heart rate (bpm)',color:C.black},
+                        ticks:{color:C.mid,callback:v=>v+' bpm'}, grid:{color:'rgba(0,0,0,0.04)'} },
+                    y:{ title:{display:true,text:S.perfAxis,color:C.black},
+                        ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} }
+                }
+            }
+        });
+    })();
+
+    // ── Same class, repeated ───────────────────────────────────
+    if (ds.classProgress.length >= 3) {
+        const rows = ds.classProgress;
+        const clsB  = niceBounds(rows.flatMap(c => [D(c.early), D(c.recent)]), 0.25);
+        const clsLo = clsB.lo, clsHi = clsB.hi;
+        new Chart(document.getElementById(`${k}ClassChart`),{
+            type:'bar',
+            data:{
+                labels: rows.map(c => c.title),
+                datasets:[{ label:'First 3 → most recent 3',
+                    data: rows.map(c => [D(c.early), D(c.recent)]),
+                    backgroundColor:C.red, borderWidth:0, borderSkipped:false, barPercentage:0.55 }]
+            },
+            options:{
+                indexAxis:'y', responsive:true,
+                plugins:{
+                    legend:{display:false},
+                    tooltip:{ callbacks:{ label: ctx => {
+                        const c = rows[ctx.dataIndex];
+                        return [`First 3: ${S.fmt(c.early)}`, `Recent 3: ${S.fmt(c.recent)}`,
+                                `Change: ${c.pct>=0?'+':''}${c.pct}%`,
+                                `Best: ${S.fmt(c.best)} · ${c.rides} sessions`];
+                    }}}
+                },
+                scales:{
+                    // A dumbbell chart encodes the CHANGE in each bar's length, so an
+                    // axis anchored at zero squashes every bar against the right edge
+                    // and hides the very thing the chart exists to show. Bound it to
+                    // the data with a margin instead.
+                    x:{ min:clsLo, max:clsHi,
+                        title:{display:true,text:S.perfAxis,color:C.mid,font:{size:11}},
+                        ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
+                    y:{ ticks:{color:C.mid,font:{size:10}}, grid:{display:false} }
+                }
+            },
+            plugins:[{ afterDatasetsDraw(chart){
+                const ctx=chart.ctx, meta=chart.getDatasetMeta(0), xs=chart.scales.x;
+                meta.data.forEach((bar,i)=>{
+                    const x = xs.getPixelForValue(D(rows[i].early));
+                    ctx.save(); ctx.fillStyle='#fff'; ctx.strokeStyle=C.red; ctx.lineWidth=2;
+                    ctx.beginPath(); ctx.arc(x, bar.y, 4.5, 0, Math.PI*2);
+                    ctx.fill(); ctx.stroke(); ctx.restore();
+                });
+            }}]
+        });
+    }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -618,16 +1096,30 @@ function processData(rows) {
 // ─────────────────────────────────────────────────────────────
 function renderDashboard(data, lastModified) {
     const { stats, longestStreak, disciplines, timeline, instructors,
-            cyclingTrend, efficiency, powerByLength, powerHRScatter, classProgress,
-            cadenceResistance, powerZones, hrZones, progression,
+            disciplineStats, cadenceResistance, speedIncline, powerZones, hrZones,
             timeOfDay, heatmap, activityByYear, yoyHours, allYears, pieYears } = data;
+
+    // The cycling section predates the generic analyzer and reads these names
+    // directly; map them across rather than rewriting eight working charts.
+    const cycling        = disciplineStats.cycling;
+    const progression    = cycling.summary;
+    const efficiency     = cycling.efficiency;
+    const powerByLength  = cycling.byLength;
+    const powerHRScatter = cycling.scatter;
+    const classProgress  = cycling.classProgress;
+    const cyclingTrend   = {
+        labels:   cycling.trend.labels,
+        power:    cycling.trend.perf,
+        powerStd: cycling.trend.perfStd,
+        hr:       cycling.trend.hr,
+        hrStd:    cycling.trend.hrStd,
+        count:    cycling.trend.count
+    };
 
     const luStr = lastModified
         ? new Date(lastModified).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})
         : null;
 
-    const topInst   = instructors.labels[0] || '—';
-    const topInstCt = instructors.hours[0] || 0;
     const bestClass = classProgress[0];
 
     app.innerHTML = `
@@ -644,7 +1136,7 @@ function renderDashboard(data, lastModified) {
         <div class="insight-box">
             <strong>${stats.totalWorkouts.toLocaleString()}</strong> workouts totalling
             <strong>${stats.totalHours.toLocaleString()} hours</strong> since ${stats.firstDate}.
-            Across ${stats.effortRides.toLocaleString()} real training rides, average power rose from
+            On the bike, across ${stats.effortRides.toLocaleString()} real training rides, average power rose from
             <strong>${progression.powerEarly}W</strong> to <strong>${progression.powerNow}W</strong>
             (<strong>+${progression.powerPct}%</strong>) while cycling heart rate moved only
             ${progression.hrDelta >= 0 ? '+' : ''}${progression.hrDelta} bpm
@@ -653,14 +1145,25 @@ function renderDashboard(data, lastModified) {
             ${progression.effNow} watts per heartbeat.
             ${bestClass ? `Biggest single-class jump: <strong>${bestClass.title}</strong>,
             ${Math.round(bestClass.early)}W → ${Math.round(bestClass.recent)}W over ${bestClass.rides} rides.` : ''}
-            ${topInst} leads all instructors with ${topInstCt} hrs.
+            <br><br>
+            Each discipline is measured on its own terms below — watts on the bike, speed on foot,
+            pace on the rower — but all four share one efficiency metric: output per heartbeat.
+            ${DISCIPLINE_SPECS
+                .filter(sp => disciplineStats[sp.key].hasTrend)
+                .map(sp => {
+                    const d = disciplineStats[sp.key];
+                    return `<strong>${sp.label}</strong> ${d.summary.effPct >= 0 ? '+' : ''}${d.summary.effPct}%`;
+                }).join(' &nbsp;·&nbsp; ')}.
+            ${DISCIPLINE_SPECS.filter(sp => disciplineStats[sp.key].hasData && !disciplineStats[sp.key].hasTrend)
+                .map(sp => `${sp.label} has too few sessions so far to trend.`).join(' ')}
         </div>
 
         <!-- ═══════════ FITNESS PROGRESSION ═══════════ -->
         <div class="section-head">
-            <h2>Fitness Progression</h2>
-            <p>Is the engine actually getting stronger? Every chart in this section uses
-               <em>effort rides only</em> — ${EFFORT_MIN_MINUTES}+ minutes, excluding warm-ups and cool-downs.</p>
+            <h2>Cycling</h2>
+            <p>${cycling.sessions.length} effort rides of ${cycling.spec.minMinutes}+ minutes
+               (${cycling.totalSessions} logged in total, warm-ups and cool-downs excluded)
+               &nbsp;|&nbsp; ${Math.round(cycling.totalMinutes/60)} hours all-in</p>
         </div>
 
         <div class="chart-container feature">
@@ -753,6 +1256,55 @@ function renderDashboard(data, lastModified) {
                 <canvas id="hrZoneChart"></canvas>
             </div>
         </div>
+
+        <!-- ═══════════ WALKING & HIKING ═══════════ -->
+        ${disciplineSectionHTML(disciplineStats.walking, {
+            trend: `Heart rate here is <b>walking sessions only</b>, on the same principle as the cycling
+                    section. Note the confound this discipline cannot escape: Peloton exports incline for
+                    runs but <b>not for walks</b>, and roughly a third of these sessions are Hike classes
+                    that hold a steep simulated grade. A slow, steep hike and a brisk flat walk sit at
+                    the same heart rate for entirely different reasons, and nothing in the export
+                    distinguishes them — so read speed here as speed, not as effort.`,
+            length: `Longer walks are paced more conservatively than short ones, so the blend of session
+                     lengths moves the overall average independently of fitness. Holding duration constant
+                     removes that.`,
+            scatter:`Up means faster; up without moving right means faster at the same heart rate. Because
+                     incline is missing for walks, some of the vertical spread is terrain rather than form.`,
+            klass:  `Hike classes repeat the same simulated route and grade, which is exactly why they are
+                     the most trustworthy comparison in this section — the terrain that confounds the other
+                     walking charts is held fixed here.`
+        })}
+
+        <!-- ═══════════ RUNNING ═══════════ -->
+        ${disciplineSectionHTML(disciplineStats.running, {
+            trend: `Heart rate is running sessions only. Running is the newest of these disciplines, so the
+                    series is short and each month rests on relatively few sessions — treat the shape as
+                    provisional until more of 2026 is in.`,
+            length: `Average speed drops as runs get longer; splitting by duration keeps a change in
+                     session mix from being read as a change in fitness.`,
+            scatter:`Unlike walking, runs do carry incline, and it stays in a narrow 0–2.5% band — so the
+                     vertical spread here is much closer to genuine pace difference.`
+        })}
+
+        ${disciplineStats.running.hasTrend ? `
+        <div class="chart-container">
+            <h2>How the Pace Gets Made — Speed vs. Incline (Running)</h2>
+            <div class="description">Left axis: avg. speed (mph) &nbsp;|&nbsp; Right axis: avg. incline (%)</div>
+            <canvas id="speedInclineChart"></canvas>
+            <div class="method-note">
+                The running counterpart to cadence-vs-resistance on the bike. The same pace is far harder
+                uphill, so speed alone can flatter or punish a month unfairly; tracking the grade alongside
+                it shows whether a faster month was genuinely faster or merely flatter.
+            </div>
+        </div>` : ''}
+
+        <!-- ═══════════ ROWING ═══════════ -->
+        ${disciplineSectionHTML(disciplineStats.rowing, {
+            scatter:`Rowing pace is shown in metres per minute so that up still means better, matching every
+                     other section; hover any point for the 500 m split. Peloton writes <b>metres and
+                     metres per second</b> into the columns labelled "Distance (mi)" and "Avg. Speed (mph)"
+                     for the rower — and only for the rower — so these figures are converted accordingly.`
+        })}
 
         <!-- ═══════════ TRAINING VOLUME & HABITS ═══════════ -->
         <div class="section-head">
@@ -944,7 +1496,7 @@ function renderDashboard(data, lastModified) {
     // 3 · Power progression at constant ride length
     (()=>{
         const lenColors = { '20':'#c0392b', '30':'#000000', '45':'#666666', '60':'#aaaaaa' };
-        const datasets = LEN_BUCKETS
+        const datasets = powerByLength.buckets
             .map(b => ({
                 label: b.label,
                 data:  powerByLength.series[b.key],
@@ -964,7 +1516,7 @@ function renderDashboard(data, lastModified) {
                     legend:{ position:'top', labels:{color:C.mid,font:{size:11},padding:14} },
                     tooltip:{ callbacks:{ label: ctx => ctx.parsed.y === null ? null
                         : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(0)} W ` +
-                          `(${powerByLength.counts[LEN_BUCKETS.find(b=>b.label===ctx.dataset.label).key][ctx.dataIndex]} rides)` }}
+                          `(${powerByLength.counts[powerByLength.buckets.find(b=>b.label===ctx.dataset.label).key][ctx.dataIndex]} rides)` }}
                 },
                 scales:{
                     x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
@@ -1031,6 +1583,8 @@ function renderDashboard(data, lastModified) {
         // classProgress is already sorted by gain descending; Chart.js draws index 0 at
         // the top of a horizontal axis, so no reversal — biggest gain reads first.
         const rows = classProgress;
+        const clsB  = niceBounds(rows.flatMap(c => [c.early, c.recent]), 0.25);
+        const clsLo = clsB.lo, clsHi = clsB.hi;
         new Chart(document.getElementById('classProgressChart'),{
             type:'bar',
             data:{
@@ -1054,7 +1608,10 @@ function renderDashboard(data, lastModified) {
                     }}}
                 },
                 scales:{
-                    x:{ title:{display:true,text:'Average power (W)',color:C.mid,font:{size:11}},
+                    // Bounded to the data, not to zero — see the note in the generic
+                    // renderer: the bar length is the change, and zero-anchoring hides it.
+                    x:{ min:clsLo, max:clsHi,
+                        title:{display:true,text:'Average power (W)',color:C.mid,font:{size:11}},
                         ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.04)'} },
                     y:{ ticks:{color:C.mid,font:{size:10}}, grid:{display:false} }
                 }
@@ -1146,6 +1703,43 @@ function renderDashboard(data, lastModified) {
     // ═══════════════════════════════════════════════════════════
     //  VOLUME & HABIT CHARTS
     // ═══════════════════════════════════════════════════════════
+
+    // ── Walking, running and rowing, via the shared renderer ───
+    drawDisciplineCharts(disciplineStats.walking);
+    drawDisciplineCharts(disciplineStats.running);
+    drawDisciplineCharts(disciplineStats.rowing);
+
+    // Running's cadence-vs-resistance analogue: speed against grade
+    if (disciplineStats.running.hasTrend) {
+        new Chart(document.getElementById('speedInclineChart'),{
+            type:'line',
+            data:{ labels:speedIncline.labels, datasets:[
+                { label:'Speed (mph)', data:speedIncline.speed, yAxisID:'y',
+                  borderColor:C.black, backgroundColor:'rgba(0,0,0,0.04)',
+                  fill:false, tension:0.35, borderWidth:2,
+                  pointRadius:3, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:1.5 },
+                { label:'Incline (%)', data:speedIncline.incline, yAxisID:'y1',
+                  borderColor:C.red, backgroundColor:'rgba(192,57,43,0.04)',
+                  fill:false, tension:0.35, borderWidth:2, borderDash:[5,3],
+                  pointRadius:3, pointBackgroundColor:C.red, pointBorderColor:'#fff', pointBorderWidth:1.5 }
+            ]},
+            options:{
+                responsive:true, interaction:{mode:'index',intersect:false},
+                plugins:{
+                    legend:{ position:'top', labels:{color:C.mid,font:{size:11}} },
+                    tooltip:{ callbacks:{ label: ctx => ctx.parsed.y===null ? null
+                        : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}` }}
+                },
+                scales:{
+                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                    y:{ position:'left', title:{display:true,text:'Speed (mph)',color:C.black},
+                        ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
+                    y1:{ position:'right', title:{display:true,text:'Incline (%)',color:C.red},
+                         ticks:{color:C.red,callback:v=>v+'%'}, grid:{drawOnChartArea:false} }
+                }
+            }
+        });
+    }
 
     // 9 · Discipline breakdown — hours (bars) + session count (line), one chart
     //     replacing the former doughnut + calories bar + time bar trio.
