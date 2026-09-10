@@ -153,7 +153,7 @@ canvas { max-height:400px; max-width:100%; }
 //  CONFIG
 // ─────────────────────────────────────────────────────────────
 const CSV_FILENAME  = 'kambizkamrani_workouts.csv';
-const CACHE_KEY     = 'peloton_cache_v11'; // v11: monthly training-mix chart, partial-month handling
+const CACHE_KEY     = 'peloton_cache_v12'; // v12: power-zone evolution from estimated FTP
 const REQUIRED_COLS = [
     'Workout Timestamp','Fitness Discipline','Length (minutes)',
     'Calories Burned','Avg. Watts','Avg. Heartrate','Instructor Name'
@@ -732,6 +732,144 @@ function processData(rows) {
         incline: runKeys.map(k=>meanStd(runMap.get(k).map(r=>num(r,'Avg. Incline'))).mean)
     };
 
+    // ═══════════════════════════════════════════════════════════
+    //  POWER ZONE EVOLUTION
+    //  Peloton's zones are percentages of FTP, so tracking how the zones
+    //  themselves have moved needs an FTP history. The six FTP Test Rides in
+    //  the export are too sparse (one seven-month gap) and a test only records
+    //  how hard you went that day — the first one reads 14% below what the
+    //  surrounding riding says was possible. So FTP is estimated from routine
+    //  training instead: the mean of the five best effort rides in a trailing
+    //  90 days, times a calibration constant.
+    //
+    //  Why top-five-of-90-days: a hard 30–45 minute ride average IS roughly
+    //  threshold power, so this needs no heroic assumption — and using five
+    //  rides rather than one keeps a single lucky day from setting the level.
+    //  It is also volume-independent, which matters here because cycling volume
+    //  halved during 2026; a percentile-based estimator would silently change
+    //  meaning as ride counts fell.
+    //
+    //  FTP_CALIBRATION is fitted to this rider's own six tests (mean ratio of
+    //  tested FTP to the estimator, 1.043 — i.e. the estimator sits ~4% below
+    //  tested threshold). Recompute it if the method changes.
+    const FTP_TREND_DAYS   = 90;
+    const FTP_TOP_N        = 5;
+    const FTP_MIN_RIDES    = 10;   // below this the window is too thin to trust
+    const FTP_CALIBRATION  = 1.043;
+    const FTP_TEST_FACTOR  = 0.95; // Peloton: FTP = 95% of the 20-min test average
+
+    // Peloton's seven zones, as fractions of FTP. Zone 7 is open-ended; the top
+    // of the band is a drawing cap, not a real ceiling.
+    const POWER_ZONES = [
+        { name:'Zone 1', desc:'Active Recovery', lo:0,    hi:0.55, color:'#e8e8e8' },
+        { name:'Zone 2', desc:'Endurance',       lo:0.55, hi:0.75, color:'#c9c9c9' },
+        { name:'Zone 3', desc:'Tempo',           lo:0.75, hi:0.90, color:'#a0a0a0' },
+        { name:'Zone 4', desc:'Threshold',       lo:0.90, hi:1.05, color:'#6e6e6e' },
+        { name:'Zone 5', desc:'VO2 Max',         lo:1.05, hi:1.20, color:'#e08b7a' },
+        { name:'Zone 6', desc:'Anaerobic',       lo:1.20, hi:1.50, color:'#cf5540' },
+        { name:'Zone 7', desc:'Neuromuscular',   lo:1.50, hi:1.75, color:'#a5271a' }
+    ];
+
+    // The routine-work pool: effort rides with the FTP tests themselves removed,
+    // so the estimate never leans on the very thing it is meant to replace.
+    const ftpPool = effort
+        .filter(r => !/ftp test/i.test(r['Title'] || ''))
+        .map(r => ({ t: r.ts.getTime(), w: num(r,'Avg. Watts') }))
+        .sort((a,b) => a.t - b.t);
+
+    function ftpEstimateAt(dateMs) {
+        const cutoff = dateMs - FTP_TREND_DAYS*24*3600*1000;
+        const w = ftpPool.filter(x => x.t <= dateMs && x.t > cutoff).map(x => x.w);
+        if (w.length < FTP_MIN_RIDES) return null;
+        const top = w.sort((a,b)=>b-a).slice(0, FTP_TOP_N);
+        return { ftp: Math.round(top.reduce((a,b)=>a+b,0)/top.length * FTP_CALIBRATION),
+                 rides: w.length };
+    }
+
+    // Monthly series, evaluated at each month's end.
+    // The month list runs CONTINUOUSLY from first to last rather than skipping
+    // months with no riding. A filled band chart reads as continuous, so an
+    // eight-month training break collapsed into one x-step would draw a cliff
+    // that looks like a sudden collapse in a single month. Empty months are
+    // carried as nulls instead, which leaves a visible gap in the bands.
+    const zoneMonths = [...new Set(effort.map(r=>r._ym))].sort();
+    const [fy, fm] = zoneMonths[0].split('-').map(Number);
+    const [ly, lm] = zoneMonths[zoneMonths.length-1].split('-').map(Number);
+    const allMonths = [];
+    for (let y=fy, mo=fm; y<ly || (y===ly && mo<=lm); mo===12 ? (mo=1, y++) : mo++)
+        allMonths.push(`${y}-${String(mo).padStart(2,'0')}`);
+
+    const zoneEvolution = { labels:[], ftp:[], rides:[], bands:{}, tests:[] };
+    POWER_ZONES.forEach(z => zoneEvolution.bands[z.name] = []);
+    allMonths.forEach(m => {
+        const [y, mo] = m.split('-').map(Number);
+        const e = ftpEstimateAt(new Date(y, mo, 0, 23, 59, 59).getTime());
+        zoneEvolution.labels.push(m);
+        zoneEvolution.ftp.push(e ? e.ftp : null);
+        zoneEvolution.rides.push(e ? e.rides : 0);
+        // Each band stores its UPPER edge in watts; the chart fills between them.
+        POWER_ZONES.forEach(z =>
+            zoneEvolution.bands[z.name].push(e ? Math.round(e.ftp * z.hi) : null));
+    });
+    // Trim any leading/trailing months that never produced an estimate
+    while (zoneEvolution.ftp.length && zoneEvolution.ftp[0] === null) {
+        zoneEvolution.labels.shift(); zoneEvolution.ftp.shift(); zoneEvolution.rides.shift();
+        POWER_ZONES.forEach(z => zoneEvolution.bands[z.name].shift());
+    }
+    while (zoneEvolution.ftp.length && zoneEvolution.ftp[zoneEvolution.ftp.length-1] === null) {
+        zoneEvolution.labels.pop(); zoneEvolution.ftp.pop(); zoneEvolution.rides.pop();
+        POWER_ZONES.forEach(z => zoneEvolution.bands[z.name].pop());
+    }
+    // First and last months that actually carry an estimate, for the takeaway
+    zoneEvolution.firstIdx = zoneEvolution.ftp.findIndex(v => v !== null);
+    zoneEvolution.lastIdx  = zoneEvolution.ftp.length - 1 -
+        [...zoneEvolution.ftp].reverse().findIndex(v => v !== null);
+
+    // The actual tests, kept only as reference marks so the estimate can be
+    // judged against them rather than trusted blindly.
+    valid.filter(r => /20 min ftp test/i.test(r['Title'] || '') && num(r,'Avg. Watts'))
+         .sort((a,b)=>a.ts-b.ts)
+         .forEach(r => {
+             const label = r._ym;
+             const i = zoneEvolution.labels.indexOf(label);
+             const tested = Math.round(num(r,'Avg. Watts') * FTP_TEST_FACTOR);
+             zoneEvolution.tests.push({
+                 label, i, tested, date: r.ts.toISOString().slice(0,10),
+                 estimate: i > -1 ? zoneEvolution.ftp[i] : null,
+                 deltaPct: i > -1 ? +(100*(tested/zoneEvolution.ftp[i]-1)).toFixed(1) : null
+             });
+         });
+
+    // ── Which zone each ride's AVERAGE fell into, by quarter ───
+    // NOT time-in-zone: the export carries one average per ride, so an interval
+    // session spent in Zone 6 and Zone 1 reports as a Zone 3 average. Zones 6
+    // and 7 therefore essentially cannot appear here — nobody averages above
+    // threshold for a whole ride — and are dropped rather than drawn as flat zero.
+    const zoneMixQ = new Map();
+    effort.filter(r => !/ftp test/i.test(r['Title'] || '')).forEach(r => {
+        const e = ftpEstimateAt(r.ts.getTime());
+        if (!e) return;
+        const frac = num(r,'Avg. Watts') / e.ftp;
+        const z = POWER_ZONES.find(z => frac >= z.lo && frac < z.hi)
+               || POWER_ZONES[POWER_ZONES.length-1];
+        if (!zoneMixQ.has(r._q)) zoneMixQ.set(r._q, {});
+        const q = zoneMixQ.get(r._q);
+        q[z.name] = (q[z.name] || 0) + 1;
+    });
+    const zoneMixKeys = [...zoneMixQ.keys()].sort()
+        .filter(k => Object.values(zoneMixQ.get(k)).reduce((a,b)=>a+b,0) >= 8);
+    const zoneMix = {
+        labels: zoneMixKeys,
+        counts: zoneMixKeys.map(k => Object.values(zoneMixQ.get(k)).reduce((a,b)=>a+b,0)),
+        series: POWER_ZONES.map(z => ({
+            name: z.name, desc: z.desc, color: z.color,
+            data: zoneMixKeys.map(k => {
+                const q = zoneMixQ.get(k), tot = Object.values(q).reduce((a,b)=>a+b,0);
+                return tot ? +(100*(q[z.name]||0)/tot).toFixed(1) : 0;
+            })
+        })).filter(sv => sv.data.some(v => v > 0))
+    };
+
     // Cycling power zones — effort rides only, so warm-ups don't pile
     // into the bottom bucket and swamp the distribution.
     const PW_BINS   = [0,125,150,175,200,225,250,Infinity];
@@ -797,7 +935,7 @@ function processData(rows) {
     return { stats, longestStreak, disciplines, timeline, instructors,
              disciplineStats, cadenceResistance, speedIncline, powerZones, hrZones,
              timeOfDay, heatmap, activityByYear, yoyHours, allYears, pieYears,
-             monthlyHours, partialNote };
+             monthlyHours, partialNote, zoneEvolution, zoneMix, POWER_ZONES };
 }
 
 
@@ -1151,7 +1289,7 @@ function renderDashboard(data, lastModified) {
     const { stats, longestStreak, disciplines, timeline, instructors,
             disciplineStats, cadenceResistance, speedIncline, powerZones, hrZones,
             timeOfDay, heatmap, activityByYear, yoyHours, allYears, pieYears,
-            monthlyHours, partialNote } = data;
+            monthlyHours, partialNote, zoneEvolution, zoneMix, POWER_ZONES } = data;
 
     // The cycling section predates the generic analyzer and reads these names
     // directly; map them across rather than rewriting eight working charts.
@@ -1295,6 +1433,52 @@ function renderDashboard(data, lastModified) {
                 Power is cadence × torque, so the same watts can come from spinning faster or from pushing
                 a heavier gear. Tracking both shows <em>how</em> the extra power is being produced, and
                 whether one has been quietly carrying the other.
+            </div>
+        </div>
+
+        <div class="chart-container feature">
+            <h2>How Your Power Zones Have Moved</h2>
+            <div class="description">Each band is one of Peloton's seven zones, in watts &nbsp;|&nbsp; the whole ladder rises as threshold power rises &nbsp;|&nbsp; dots mark actual FTP tests</div>
+            <canvas id="zoneEvolutionChart"></canvas>
+            <div class="takeaway" id="zoneTakeaway"></div>
+            <div class="method-note">
+                <b>Zones are anchored to estimated FTP, not to test results.</b> Peloton defines every zone
+                as a percentage of FTP, so this chart needs a threshold history — and the six FTP tests in
+                the export are a poor basis for one: they are sparse (a seven-month gap), and a test only
+                captures how hard you went on that particular day.
+                FTP is instead estimated each month from <b>the five best effort rides in the previous 90
+                days</b>, which is a fair proxy because a hard 30–45 minute ride average is already close to
+                threshold power. Using five rides rather than one keeps a single lucky day from setting the
+                level, and using a fixed count rather than a percentile keeps the estimate stable while ride
+                volume changed.
+                <br><br>
+                The tests are drawn as dots so the estimate can be checked rather than taken on faith.
+                ${(() => {
+                    const good = zoneEvolution.tests.filter(t => t.deltaPct !== null && Math.abs(t.deltaPct) <= 5).length;
+                    const bad  = zoneEvolution.tests.filter(t => t.deltaPct !== null && Math.abs(t.deltaPct) > 5);
+                    return `${good} of ${zoneEvolution.tests.filter(t=>t.deltaPct!==null).length} tests land within 5% of the estimate` +
+                        (bad.length ? `. The exception is <b>${bad.map(t=>t.date).join(', ')}</b>, ` +
+                        `${bad.map(t=>`${t.deltaPct}%`).join(', ')} against the surrounding riding — a test that came in well below what the training either side of it says was possible.` : '.');
+                })()}
+                Because the estimate needs only ordinary rides, it also reaches back
+                ${zoneEvolution.labels[0]} — about a year before the first test.
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <h2>Where Each Ride's Average Landed</h2>
+            <div class="description">Share of rides per quarter by the zone their <em>average</em> power fell in, measured against that period's estimated FTP</div>
+            <canvas id="zoneMixChart"></canvas>
+            <div class="method-note">
+                <b>This is not time-in-zone, and the export cannot give time-in-zone.</b> Peloton exports a
+                single average for each ride, so a Power Zone Max session spent alternating between Zone 6
+                efforts and Zone 1 recoveries is recorded here as one Zone 3 average. Zones 6 and 7 are
+                absent for the same reason — nobody averages above threshold for an entire ride — so they
+                are left out rather than drawn as a permanent zero.
+                <br><br>
+                What it does show is where the bulk of the riding sits, normalised to the fitness of the
+                time: because the zone boundaries rise as you do, a band holding steady means you are
+                training at the same <em>relative</em> intensity while getting absolutely stronger.
             </div>
         </div>
 
@@ -1728,6 +1912,133 @@ function renderDashboard(data, lastModified) {
                     ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
                 y1:{ position:'right', title:{display:true,text:'Resistance (%)',color:C.red},
                      ticks:{color:C.red,callback:v=>v+'%'}, grid:{drawOnChartArea:false} }
+            }
+        }
+    });
+
+    // 6b · Power zone evolution — filled bands between zone boundaries
+    (()=>{
+        const Z = POWER_ZONES;
+        // Each dataset carries its zone's UPPER edge; fill:'-1' paints down to the
+        // band below it, so the stack of fills reproduces the zone ladder without
+        // a stacked axis — which leaves the axis free for the test markers.
+        const bands = Z.map((z,i) => ({
+            label: `${z.name} · ${z.desc}`,
+            data: zoneEvolution.bands[z.name],
+            backgroundColor: z.color,
+            borderColor: 'rgba(255,255,255,0.75)',
+            borderWidth: 1,
+            fill: i === 0 ? 'origin' : '-1',
+            pointRadius: 0, pointHoverRadius: 0, tension: 0.25, order: 3,
+            spanGaps: false
+        }));
+
+        const ftpLine = {
+            label: 'Estimated FTP',
+            data: zoneEvolution.ftp,
+            borderColor: '#000', borderWidth: 2.5, borderDash: [6,3],
+            fill: false, pointRadius: 0, tension: 0.25, order: 2, spanGaps: false
+        };
+
+        // Tests plotted at their month's index; null elsewhere so the marks float free
+        const testPts = zoneEvolution.labels.map((_,i) => {
+            const t = zoneEvolution.tests.find(t => t.i === i);
+            return t ? t.tested : null;
+        });
+        const testMarks = {
+            label: 'Actual FTP test',
+            data: testPts,
+            borderColor: 'transparent', backgroundColor: '#000',
+            pointRadius: 6, pointHoverRadius: 8,
+            pointStyle: 'rectRot', pointBorderColor: '#fff', pointBorderWidth: 2,
+            showLine: false, fill: false, order: 1
+        };
+
+        new Chart(document.getElementById('zoneEvolutionChart'),{
+            type:'line',
+            data:{ labels: zoneEvolution.labels, datasets: [...bands, ftpLine, testMarks] },
+            options:{
+                responsive:true, interaction:{mode:'index',intersect:false},
+                plugins:{
+                    legend:{ position:'top',
+                        labels:{ color:C.mid, font:{size:10}, padding:8, boxWidth:12,
+                                 // `order` drives draw order; without this the reference
+                                 // marks would also lead the legend, ahead of the zones.
+                                 sort:(a,b)=>a.datasetIndex-b.datasetIndex } },
+                    tooltip:{
+                        callbacks:{
+                            title: items => {
+                                const i = items[0].dataIndex;
+                                return zoneEvolution.ftp[i] === null
+                                    ? `${zoneEvolution.labels[i]} · no riding in the previous 90 days`
+                                    : `${zoneEvolution.labels[i]} · est. FTP ${zoneEvolution.ftp[i]}W ` +
+                                      `(from ${zoneEvolution.rides[i]} rides)`;
+                            },
+                            label: ctx => {
+                                const i = ctx.dataIndex;
+                                if (ctx.dataset.label === 'Estimated FTP') return null;
+                                if (ctx.dataset.label === 'Actual FTP test') {
+                                    const t = zoneEvolution.tests.find(t => t.i === i);
+                                    return t ? `Actual test: ${t.tested}W (${t.deltaPct >= 0 ? '+' : ''}${t.deltaPct}% vs estimate)` : null;
+                                }
+                                const zi = Z.findIndex(z => `${z.name} · ${z.desc}` === ctx.dataset.label);
+                                if (zi < 0) return null;
+                                const ftp = zoneEvolution.ftp[i];
+                                if (ftp === null) return null;
+                                const lo = Math.round(ftp * Z[zi].lo), hi = Math.round(ftp * Z[zi].hi);
+                                return `${ctx.dataset.label}: ${lo}–${zi === Z.length-1 ? '' : hi}${zi === Z.length-1 ? '+' : ''}W`;
+                            }
+                        }
+                    }
+                },
+                scales:{
+                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                    y:{ beginAtZero:true,
+                        title:{display:true,text:'Power (W)',color:C.black},
+                        ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.06)'} }
+                }
+            }
+        });
+
+        // Takeaway: first vs latest zone ladder
+        if (zoneEvolution.firstIdx > -1) {
+            const f0 = zoneEvolution.ftp[zoneEvolution.firstIdx];
+            const f1 = zoneEvolution.ftp[zoneEvolution.lastIdx];
+            const z2 = Z[1], z4 = Z[3];
+            document.getElementById('zoneTakeaway').innerHTML = `
+                <div><div class="k">Estimated FTP</div><div class="v up">${f0} → ${f1}W</div></div>
+                <div><div class="k">Change</div><div class="v up">+${Math.round(100*(f1/f0-1))}%</div></div>
+                <div><div class="k">Zone 2 (Endurance)</div><div class="v">${Math.round(f0*z2.lo)}–${Math.round(f0*z2.hi)} → ${Math.round(f1*z2.lo)}–${Math.round(f1*z2.hi)}W</div></div>
+                <div><div class="k">Zone 4 (Threshold)</div><div class="v">${Math.round(f0*z4.lo)}–${Math.round(f0*z4.hi)} → ${Math.round(f1*z4.lo)}–${Math.round(f1*z4.hi)}W</div></div>`;
+        }
+    })();
+
+    // 6c · Where each ride's average landed, by quarter (100% stacked)
+    new Chart(document.getElementById('zoneMixChart'),{
+        type:'bar',
+        data:{
+            labels: zoneMix.labels,
+            datasets: zoneMix.series.map(sv => ({
+                label: `${sv.name} · ${sv.desc}`,
+                data: sv.data,
+                backgroundColor: sv.color,
+                borderWidth: 0, stack: 'z'
+            }))
+        },
+        options:{
+            responsive:true, interaction:{mode:'index',intersect:false},
+            plugins:{
+                legend:{ position:'top', labels:{color:C.mid,font:{size:10},padding:8,boxWidth:12} },
+                tooltip:{ callbacks:{
+                    title: items => `${items[0].label} · ${zoneMix.counts[items[0].dataIndex]} rides`,
+                    label: ctx => ctx.parsed.y ? `${ctx.dataset.label}: ${ctx.parsed.y}% of rides` : null
+                }}
+            },
+            scales:{
+                x:{ stacked:true, ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                y:{ stacked:true, beginAtZero:true, max:100,
+                    title:{display:true,text:'Share of rides (%)',color:C.black},
+                    ticks:{color:C.mid,callback:v=>v+'%'}, grid:{color:'rgba(0,0,0,0.04)'} }
             }
         }
     });
