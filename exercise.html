@@ -820,6 +820,70 @@ function processData(rows) {
         zoneEvolution.labels.pop(); zoneEvolution.ftp.pop(); zoneEvolution.rides.pop();
         POWER_ZONES.forEach(z => zoneEvolution.bands[z.name].pop());
     }
+    // ── Collapse long lay-offs into a single labelled slot ─────
+    // A run of empty months is not worth one x-slot each: it spends a third of
+    // the chart's width on nothing and squashes the training either side of it.
+    // But a lay-off is not nothing either — the drop across it is the clearest
+    // measure of what detraining costs — so each run collapses to one slot that
+    // carries how long it was, what was lost, and how long recovery took.
+    const GAP_COLLAPSE_MIN = 2;   // runs shorter than this stay as ordinary months
+    (() => {
+        const L = zoneEvolution.labels, F = zoneEvolution.ftp, R = zoneEvolution.rides;
+        const breaks = [];
+        for (let i = 0; i < F.length; i++) {
+            if (F[i] !== null) continue;
+            let j = i; while (j+1 < F.length && F[j+1] === null) j++;
+            const run = j - i + 1;
+            if (run >= GAP_COLLAPSE_MIN) breaks.push({ start:i, end:j, run });
+            i = j;
+        }
+        // Splice from the back so earlier indices stay valid
+        breaks.reverse().forEach(b => {
+            // How long the break really was must come from ride dates, not from
+            // the run of empty months: the estimate keeps reporting for a while
+            // after the last ride, because the 90-day window still holds rides.
+            const runStart = new Date(L[b.start] + '-01').getTime();
+            const runEndM  = L[b.end].split('-').map(Number);
+            const runEnd   = new Date(runEndM[0], runEndM[1], 0, 23, 59, 59).getTime();
+            const lastBefore  = [...ftpPool].reverse().find(x => x.t < runStart);
+            const firstAfter  = ftpPool.find(x => x.t > runEnd);
+            const months = (lastBefore && firstAfter)
+                ? Math.round((firstAfter.t - lastBefore.t) / (30.44*24*3600*1000))
+                : b.run + 1;
+            // Fitness going in is the estimate for the month of the last ride —
+            // not the final non-null month, which is already decaying as the
+            // window empties out.
+            const ymOf = ms => { const d = new Date(ms);
+                return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; };
+            const idxBefore = lastBefore ? L.indexOf(ymOf(lastBefore.t)) : -1;
+            const before = idxBefore > -1 ? F[idxBefore] : (F[b.start-1] ?? null);
+            const after  = F[b.end+1] ?? null;
+            // Months of riding needed to regain the pre-break level
+            let recovery = null;
+            if (before !== null && after !== null) {
+                for (let k = b.end+1; k < F.length; k++)
+                    if (F[k] !== null && F[k] >= before) { recovery = k - b.end; break; }
+            }
+            zoneEvolution.gapInfo = zoneEvolution.gapInfo || [];
+            zoneEvolution.gapInfo.push({
+                index: b.start, months, before, after,
+                lossPct: (before && after) ? Math.round(100*(after/before-1)) : null,
+                recovery,
+                from: lastBefore ? ymOf(lastBefore.t) : (L[b.start-1] ?? null),
+                to:   firstAfter ? ymOf(firstAfter.t) : (L[b.end+1] ?? null)
+            });
+            // The column itself is captioned, so the tick only needs to signal
+            // an elision — the conventional mark for a broken axis.
+            const label = '⋯';
+            L.splice(b.start, b.run, label);
+            F.splice(b.start, b.run, null);
+            R.splice(b.start, b.run, 0);
+            POWER_ZONES.forEach(z => zoneEvolution.bands[z.name].splice(b.start, b.run, null));
+        });
+        // Indices were computed back-to-front; restore chronological order
+        if (zoneEvolution.gapInfo) zoneEvolution.gapInfo.reverse();
+    })();
+
     // First and last months that actually carry an estimate, for the takeaway
     zoneEvolution.firstIdx = zoneEvolution.ftp.findIndex(v => v !== null);
     zoneEvolution.lastIdx  = zoneEvolution.ftp.length - 1 -
@@ -1461,7 +1525,15 @@ function renderDashboard(data, lastModified) {
                         `${bad.map(t=>`${t.deltaPct}%`).join(', ')} against the surrounding riding — a test that came in well below what the training either side of it says was possible.` : '.');
                 })()}
                 Because the estimate needs only ordinary rides, it also reaches back
-                ${zoneEvolution.labels[0]} — about a year before the first test.
+                ${zoneEvolution.labels[zoneEvolution.firstIdx]} — about a year before the first test.
+                ${(zoneEvolution.gapInfo || []).filter(g => g.before && g.after).map(g => `
+                <br><br>
+                <b>The hatched column is a lay-off, not missing data.</b> ${g.months} months away from the
+                bike (${g.from} → ${g.to}) cost <b>${g.before}W → ${g.after}W, a ${Math.abs(g.lossPct)}% drop
+                in threshold power</b>${g.recovery ? `, and took ${g.recovery} months of riding to win back` : ''}.
+                Those months are collapsed into a single column rather than given one slot each: empty
+                months would spend a third of the chart's width on nothing and squash the training either
+                side of them.`).join('')}
             </div>
         </div>
 
@@ -1969,10 +2041,16 @@ function renderDashboard(data, lastModified) {
                         callbacks:{
                             title: items => {
                                 const i = items[0].dataIndex;
-                                return zoneEvolution.ftp[i] === null
-                                    ? `${zoneEvolution.labels[i]} · no riding in the previous 90 days`
-                                    : `${zoneEvolution.labels[i]} · est. FTP ${zoneEvolution.ftp[i]}W ` +
-                                      `(from ${zoneEvolution.rides[i]} rides)`;
+                                if (zoneEvolution.ftp[i] !== null)
+                                    return `${zoneEvolution.labels[i]} · est. FTP ${zoneEvolution.ftp[i]}W ` +
+                                           `(from ${zoneEvolution.rides[i]} rides)`;
+                                const g = (zoneEvolution.gapInfo || []).find(g => g.index === i);
+                                if (!g) return `${zoneEvolution.labels[i]} · no riding in the previous 90 days`;
+                                return `${g.months} months away from the bike (${g.from} → ${g.to})` +
+                                       (g.before !== null && g.after !== null
+                                          ? ` · ${g.before}W → ${g.after}W (${g.lossPct}%)` +
+                                            (g.recovery ? ` · ${g.recovery} months to recover` : '')
+                                          : '');
                             },
                             label: ctx => {
                                 const i = ctx.dataIndex;
@@ -1997,7 +2075,49 @@ function renderDashboard(data, lastModified) {
                         title:{display:true,text:'Power (W)',color:C.black},
                         ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.06)'} }
                 }
-            }
+            },
+            plugins:[{
+                // Mark each collapsed lay-off: hatched column, and the cost written
+                // across it, so the gap reads as a fact about the training rather
+                // than as missing data.
+                id:'layoffBands',
+                beforeDatasetsDraw(chart){
+                    const info = zoneEvolution.gapInfo;
+                    if (!info || !info.length) return;
+                    const ctx = chart.ctx, xs = chart.scales.x, ys = chart.scales.y;
+                    info.forEach(g => {
+                        const c = xs.getPixelForValue(g.index);
+                        const half = (xs.width / Math.max(1, xs.ticks.length)) * 0.5;
+                        const x0 = c - half, x1 = c + half;
+                        ctx.save();
+                        ctx.beginPath(); ctx.rect(x0, ys.top, x1-x0, ys.bottom-ys.top); ctx.clip();
+                        ctx.fillStyle = '#fafafa';
+                        ctx.fillRect(x0, ys.top, x1-x0, ys.bottom-ys.top);
+                        ctx.strokeStyle = 'rgba(0,0,0,0.10)'; ctx.lineWidth = 1;
+                        for (let x = x0 - (ys.bottom-ys.top); x < x1; x += 7) {
+                            ctx.beginPath();
+                            ctx.moveTo(x, ys.bottom); ctx.lineTo(x + (ys.bottom-ys.top), ys.top);
+                            ctx.stroke();
+                        }
+                        ctx.restore();
+                        // Side rules so the break edge is unambiguous
+                        ctx.save();
+                        ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1; ctx.setLineDash([3,3]);
+                        [x0,x1].forEach(x => {
+                            ctx.beginPath(); ctx.moveTo(x, ys.top); ctx.lineTo(x, ys.bottom); ctx.stroke();
+                        });
+                        ctx.restore();
+                        // Vertical caption
+                        ctx.save();
+                        ctx.translate((x0+x1)/2, (ys.top+ys.bottom)/2);
+                        ctx.rotate(-Math.PI/2);
+                        ctx.textAlign='center'; ctx.textBaseline='middle';
+                        ctx.fillStyle = C.dark; ctx.font = '600 11px inherit';
+                        ctx.fillText(`${g.months} months off the bike`, 0, 0);
+                        ctx.restore();
+                    });
+                }
+            }]
         });
 
         // Takeaway: first vs latest zone ladder
