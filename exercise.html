@@ -1,3 +1,8 @@
+---
+layout: null
+title: Exercise
+permalink: /exercise/
+---
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -152,7 +157,9 @@ canvas { max-height:400px; max-width:100%; }
 // ─────────────────────────────────────────────────────────────
 //  CONFIG
 // ─────────────────────────────────────────────────────────────
-const CSV_FILENAME  = 'kambizkamrani_workouts.csv';
+// Absolute path: the page is served from /exercise/ (see the permalink in this
+// file's front matter), so a relative name would resolve to /exercise/<file>.
+const CSV_FILENAME  = '/kambizkamrani_workouts.csv';
 const CACHE_KEY     = 'peloton_cache_v12'; // v12: power-zone evolution from estimated FTP
 const REQUIRED_COLS = [
     'Workout Timestamp','Fitness Discipline','Length (minutes)',
