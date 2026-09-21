@@ -1,0 +1,1553 @@
+---
+layout: null
+title: Music
+permalink: /music/
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Listening History</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    background:#fff;
+    color:#000;
+    padding:48px 24px;
+    line-height:1.6;
+}
+.container { max-width:1200px; margin:0 auto; }
+
+/* ── Header ── */
+.header { border-bottom:2px solid #000; padding-bottom:28px; margin-bottom:44px; }
+.header h1 { font-size:2.4em; font-weight:700; letter-spacing:-.5px; margin-bottom:6px; }
+.header-meta { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; }
+.header .subtitle { font-size:.95em; color:#666; }
+.last-updated { font-size:.78em; color:#999; font-style:italic; }
+.nav-link { font-size:.78em; color:#999; }
+.nav-link a { color:#999; text-decoration:none; }
+.nav-link a:hover { color:#000; text-decoration:underline; }
+
+/* ── Stat cards ── */
+.stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:48px; }
+.stat-card { border:2px solid #000; padding:22px 14px; text-align:center; transition:background .15s; }
+.stat-card:hover { background:#f5f5f5; }
+.stat-card .value { font-size:2em; font-weight:700; margin-bottom:5px; font-variant-numeric:tabular-nums; line-height:1.1; }
+.stat-card .label { font-size:.75em; text-transform:uppercase; letter-spacing:1.1px; color:#666; }
+.stat-card .sub { font-size:.68em; color:#999; margin-top:3px; }
+.stat-card.accent { border-color:#c0392b; }
+.stat-card.accent .value { color:#c0392b; }
+
+/* ── Section dividers ── */
+.section-head { margin:56px 0 24px; padding-bottom:10px; border-bottom:2px solid #000; }
+.section-head:first-of-type { margin-top:0; }
+.section-head h2 { font-size:1.35em; font-weight:700; letter-spacing:-.3px; }
+.section-head p { font-size:.85em; color:#666; margin-top:3px; }
+
+/* ── Chart containers ── */
+.chart-container { border:1px solid #ccc; padding:24px; margin-bottom:28px; background:#fff; }
+.chart-container h2 { font-size:1.15em; font-weight:600; margin-bottom:5px; letter-spacing:-.2px; }
+.chart-container .description { color:#666; font-size:.82em; margin-bottom:16px; }
+.chart-container.feature { border:2px solid #000; }
+.two-col { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+.three-col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:24px; }
+/* Grid children default to min-width:auto, which sizes them to their content and
+   stops a wide child (the hour heatmap) from ever scrolling inside its own box —
+   the column silently widens instead and the whole page scrolls sideways. */
+.two-col > *, .three-col > * { min-width:0; }
+
+canvas { max-height:400px; max-width:100%; }
+.tall canvas { max-height:520px; }
+
+/* ── Insight box ── */
+.insight-box {
+    border-left:3px solid #000;
+    padding:16px 20px;
+    margin:0 0 40px;
+    background:#f9f9f9;
+    font-size:.9em;
+    line-height:1.75;
+}
+.insight-box strong { font-weight:700; }
+
+/* ── Method note ── */
+.method-note {
+    margin-top:14px; padding:10px 14px;
+    background:#f7f7f7; border-left:2px solid #999;
+    font-size:.76em; color:#555; line-height:1.6;
+}
+.method-note b { color:#000; }
+
+/* ── Takeaway strip ── */
+.takeaway { display:flex; flex-wrap:wrap; gap:0; margin-top:18px; border-top:1px solid #ddd; padding-top:14px; }
+.takeaway div { flex:1 1 130px; padding:0 14px; border-left:1px solid #eee; }
+.takeaway div:first-child { border-left:0; padding-left:0; }
+.takeaway .k { font-size:.68em; text-transform:uppercase; letter-spacing:1px; color:#888; }
+.takeaway .v { font-size:1.25em; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.3; }
+.takeaway .v.up { color:#c0392b; }
+
+/* ── Clock / hour-by-year heatmap ── */
+.hm { overflow-x:auto; max-width:100%; padding-bottom:6px; }
+/* Fixed layout + full width lets the 24 hour columns share the container
+   evenly instead of leaving dead space at wide sizes; the min-width keeps
+   them legible on a phone, where the box scrolls instead. */
+.hm table { border-collapse:collapse; font-size:.72em; width:100%; table-layout:fixed; min-width:560px; }
+.hm th.rowhead { width:46px; }
+.hm td, .hm th { padding:0; }
+.hm th { font-weight:600; color:#888; font-size:.92em; padding:0 5px 5px; white-space:nowrap; }
+.hm th.rowhead { text-align:right; padding-right:8px; font-variant-numeric:tabular-nums; }
+.hm .c { width:auto; height:22px; border-radius:2px; }
+.hm .c[data-v] { outline:0; }
+
+/* ── Consistency calendar ── */
+.cal-year { margin-bottom:18px; }
+.cal-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; }
+.cal-head .y { font-weight:700; font-size:.95em; }
+.cal-head .s { font-size:.78em; color:#666; }
+.cal-grid { display:grid; grid-auto-flow:column; grid-template-rows:repeat(7,1fr); gap:2px; overflow-x:auto; padding-bottom:4px; }
+.cal-cell { width:11px; height:11px; border-radius:2px; background:#f0f0f0; }
+.cal-legend { display:flex; align-items:center; gap:4px; flex-wrap:wrap; font-size:.72em; color:#888; margin-top:10px; }
+.cal-legend .gap { margin-left:14px; }
+.cal-legend i { width:11px; height:11px; border-radius:2px; display:inline-block; }
+@media(max-width:600px){ .cal-cell, .cal-legend i { width:8px; height:8px; } }
+@media(max-width:600px){ .hm .c { height:16px; } .hm table { font-size:.66em; min-width:520px; } }
+
+/* ── Ranked lists ── */
+.rank { width:100%; border-collapse:collapse; font-size:.85em; }
+.rank th {
+    text-align:left; font-size:.68em; text-transform:uppercase; letter-spacing:1px;
+    color:#888; font-weight:600; padding:0 8px 8px 0; border-bottom:1px solid #ddd;
+}
+.rank td { padding:7px 8px 7px 0; border-bottom:1px solid #f0f0f0; vertical-align:middle; }
+.rank td.n { color:#bbb; font-variant-numeric:tabular-nums; width:26px; font-size:.9em; }
+.rank td.v { text-align:right; font-variant-numeric:tabular-nums; font-weight:600; white-space:nowrap; }
+.rank td.meta { text-align:right; color:#999; font-size:.85em; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.rank .bar { display:block; height:3px; background:#000; margin-top:4px; }
+.rank .sub { color:#999; font-size:.85em; }
+.rank tr:hover td { background:#fafafa; }
+
+/* ── Era ribbon ── */
+.ribbon { display:flex; flex-wrap:wrap; gap:0; border:1px solid #ddd; border-left:0; margin-top:4px; }
+.ribbon div { flex:1 1 92px; border-left:1px solid #ddd; padding:11px 12px; }
+.ribbon .y { font-size:.72em; letter-spacing:1px; color:#888; text-transform:uppercase; }
+.ribbon .a { font-size:.88em; font-weight:700; line-height:1.35; margin-top:2px; }
+.ribbon .p { font-size:.74em; color:#999; font-variant-numeric:tabular-nums; }
+
+/* ── State screens ── */
+.state-screen { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:60vh; text-align:center; gap:18px; }
+.state-screen .icon { font-size:3em; }
+.state-screen h2 { font-size:1.4em; font-weight:600; }
+.state-screen p { color:#666; font-size:.95em; max-width:480px; line-height:1.6; }
+.state-screen code {
+    background:#f3f3f3; border:1px solid #ddd;
+    padding:12px 20px; font-family:monospace; font-size:.9em; color:#333;
+    display:block; margin-top:4px;
+}
+.error-detail { color:#c0392b; font-size:.85em; font-family:monospace; }
+.spinner { width:40px; height:40px; border:3px solid #eee; border-top-color:#000; border-radius:50%; animation:spin .8s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* ── Footer ── */
+.footer { text-align:center; margin-top:48px; padding-top:24px; border-top:1px solid #ccc; color:#999; font-size:.82em; }
+.footer a { color:#999; }
+
+/* ── Tablet ── */
+@media(max-width:900px){
+    .stats-grid { grid-template-columns:repeat(3,1fr); }
+    .three-col { grid-template-columns:1fr 1fr; }
+}
+
+/* ── Mobile ── */
+@media(max-width:600px){
+    body { padding:24px 14px; }
+    .header h1 { font-size:1.6em; }
+    .header-meta { flex-direction:column; gap:4px; }
+    .stats-grid { grid-template-columns:repeat(2,1fr); gap:10px; margin-bottom:32px; }
+    .stat-card { padding:16px 10px; }
+    .stat-card .value { font-size:1.5em; }
+    .stat-card .label { font-size:.68em; }
+    .two-col { grid-template-columns:1fr; gap:0; }
+    .two-col .chart-container { margin-bottom:28px; }
+    .three-col { grid-template-columns:1fr; }
+    .chart-container { padding:18px 14px; }
+    canvas { max-height:300px; }
+    .tall canvas { max-height:380px; }
+    .takeaway div { flex:1 1 50%; border-left:0; padding:6px 0; }
+    .section-head h2 { font-size:1.15em; }
+    .ribbon div { flex:1 1 50%; }
+}
+</style>
+</head>
+<body>
+<div class="container" id="app"></div>
+
+<script>
+{% raw %}
+/* ─────────────────────────────────────────────────────────────────────────
+   LIQUID GUARD — do not remove the Liquid raw/endraw tags wrapping this
+   script. (They are deliberately not spelled out inside this comment: a
+   literal endraw tag here would close the guard early, orphan the real one
+   at the bottom, and fail the Jekyll build with "Unknown tag 'endraw'".)
+
+   This page carries Jekyll front matter (see the top of the file), so Jekyll
+   runs Liquid over it before serving. Liquid evaluates {{ ... }} as an
+   expression, and this file is a thousand lines of chart configuration full
+   of nested object literals — so an ordinary edit like `scales:{{x:1}}` puts
+   two braces side by side and Liquid silently DELETES that span. There is no
+   build error: the page deploys, the JavaScript is corrupt, and the
+   dashboard renders blank. Everything between the raw tags is passed through
+   untouched, which makes that failure impossible rather than merely unlikely.
+
+   The trade-off: no Liquid works in here either. If you ever need a Jekyll
+   value in this script, put it in a data attribute on an element outside
+   this block and read it from the DOM.
+   ───────────────────────────────────────────────────────────────────────── */
+// ─────────────────────────────────────────────────────────────
+//  CONFIG
+// ─────────────────────────────────────────────────────────────
+// Absolute path: the page is served from /music/ (see the permalink in this
+// file's front matter), so a relative name would resolve to /music/<file>.
+const CSV_FILENAME = '/kambizkamrani_lastfm.csv';
+const CACHE_KEY    = 'lastfm_cache_v1';
+
+// The account opens in Feb 2011 but then goes dark for years at a stretch —
+// the longest silence runs 589 days, ending 8 Apr 2019. Everything before
+// that is 578 scrobbles of fragments; everything after is a continuous daily
+// record. Rate statistics ("per day", "% of days active") are quoted from the
+// continuous era only, because averaging across a five-year silence describes
+// a listener who does not exist. The long view charts still show all of it.
+const ERA_START      = new Date(2019, 3, 8);
+const ERA_START_TEXT = 'April 2019';
+
+// A scrobble lands when a track finishes, so consecutive plays sit roughly one
+// track-length apart. A half-hour of silence is a new sitting, not a pause.
+const SESSION_GAP_MIN = 30;
+
+// Median inter-scrobble gap in this file is 3 minutes; the mean track is a
+// little longer than the median because the gap distribution has a tail.
+// Used only for the "days of music" headline, which is explicitly an estimate.
+const EST_TRACK_MIN = 3.5;
+
+// Thresholds. Below these a chart is reporting noise, so it is suppressed
+// rather than drawn — the same rule the exercise dashboard follows.
+const MIN_ARTIST_PLAYS  = 150;  // artist-era ribbon and comet chart
+const MIN_YEAR_SCROBBLES = 500; // a year thin enough to mislead is left out
+const BINGE_MIN_PLAYS   = 60;   // a day has to be substantial to count
+const BINGE_MIN_SHARE   = 0.5;  // ...and one artist has to own half of it
+
+const TOP_N_ARTISTS = 25;
+const ERA_ARTISTS   = 8;   // lines on the taste-migration chart
+
+// ─────────────────────────────────────────────────────────────
+//  PALETTE
+// ─────────────────────────────────────────────────────────────
+const C = { black:'#000', dark:'#333', mid:'#666', light:'#999', vlight:'#ccc', red:'#c0392b' };
+// Ordered so adjacent series stay separable in greyscale as well as colour.
+const SERIES = ['#000000','#c0392b','#2c6e8f','#7a7a7a','#8e6d3f','#4a7c59','#8e5572','#b5893c'];
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DAYS   = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+// Calendar ramp, in scrobbles logged that day.
+const CAL_STEPS  = [0, 10, 30, 60, 120];
+const CAL_COLORS = ['#f0f0f0','#d8d8d8','#a8a8a8','#6e6e6e','#333333','#000000'];
+
+const app = document.getElementById('app');
+
+// ─────────────────────────────────────────────────────────────
+//  STATE SCREENS
+// ─────────────────────────────────────────────────────────────
+function showLoading() {
+    app.innerHTML = `
+        <div class="state-screen">
+            <div class="spinner"></div>
+            <h2>Loading listening history…</h2>
+            <p>Fetching <code>${CSV_FILENAME}</code> and parsing it in the browser.</p>
+        </div>`;
+}
+function showError(detail) {
+    app.innerHTML = `
+        <div class="state-screen">
+            <div class="icon">⚠</div>
+            <h2>Could not load ${CSV_FILENAME}</h2>
+            <p class="error-detail">${detail}</p>
+            <p>Place the Last.fm export at <code>${CSV_FILENAME}</code> and reload.</p>
+        </div>`;
+}
+function showValidationError(msg) {
+    app.innerHTML = `
+        <div class="state-screen">
+            <div class="icon">⚠</div>
+            <h2>Unexpected CSV format</h2>
+            <p class="error-detail">${msg}</p>
+            <p>Expected four columns with no header row:
+               <code>artist, album, track, "DD Mon YYYY, HH:MM"</code></p>
+        </div>`;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  CSV PARSER
+//  The Last.fm export is headerless and quotes only the timestamp (it is the
+//  one field containing a comma), but artist and track names carry quotes and
+//  commas of their own often enough that splitting on "," is not safe. This is
+//  a character scanner over the whole text rather than a per-line split, so a
+//  newline inside a quoted field cannot desynchronise the parse.
+// ─────────────────────────────────────────────────────────────
+function parseCSV(text) {
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);   // strip BOM
+    const out = [];
+    let row = [], cur = '', inQ = false;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (inQ) {
+            if (ch === '"') {
+                if (text[i+1] === '"') { cur += '"'; i++; }     // escaped quote
+                else inQ = false;
+            } else cur += ch;
+        } else if (ch === '"') inQ = true;
+        else if (ch === ',') { row.push(cur); cur = ''; }
+        else if (ch === '\n') { row.push(cur); out.push(row); row = []; cur = ''; }
+        else if (ch !== '\r') cur += ch;
+    }
+    if (cur !== '' || row.length) { row.push(cur); out.push(row); }
+    return out;
+}
+
+// "20 Sep 2026, 23:49" -> Date in the browser's local frame.
+// Built component-wise rather than handed to Date.parse: the native parser
+// treats some of these shapes as UTC, which would silently rotate the whole
+// clock chart by the viewer's offset.
+const MON = { Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11 };
+const TS_RE = /^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4}),?\s+(\d{1,2}):(\d{2})/;
+function parseTS(s) {
+    const m = TS_RE.exec((s || '').trim());
+    if (!m) return null;
+    const mo = MON[m[2][0].toUpperCase() + m[2].slice(1,3).toLowerCase()];
+    if (mo === undefined) return null;
+    const d = new Date(+m[3], mo, +m[1], +m[4], +m[5]);
+    return isNaN(d.getTime()) ? null : d;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  HELPERS
+// ─────────────────────────────────────────────────────────────
+const ymd   = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const ym    = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+const comma = n => n.toLocaleString('en-US');
+const pct   = (a,b) => b ? 100*a/b : 0;
+
+function bump(map, key, by) { map.set(key, (map.get(key) || 0) + (by === undefined ? 1 : by)); }
+function topOf(map, n) {
+    return [...map.entries()].sort((a,b) => b[1]-a[1]).slice(0, n);
+}
+function median(sorted) {
+    if (!sorted.length) return 0;
+    const m = sorted.length >> 1;
+    return sorted.length % 2 ? sorted[m] : (sorted[m-1]+sorted[m])/2;
+}
+function quantile(sorted, q) {
+    if (!sorted.length) return 0;
+    return sorted[Math.min(sorted.length-1, Math.floor(q*sorted.length))];
+}
+// Two-proportion z test. Used once, to say whether the weekend lift in the
+// morning trough is a real difference or a shrug.
+function zProp(x1, n1, x2, n2) {
+    if (!n1 || !n2) return 0;
+    const p = (x1+x2)/(n1+n2);
+    const se = Math.sqrt(p*(1-p)*(1/n1 + 1/n2));
+    return se ? (x2/n2 - x1/n1)/se : 0;
+}
+function calColor(v) {
+    if (!v) return CAL_COLORS[0];
+    let i = 1;
+    for (let s = 1; s < CAL_STEPS.length; s++) if (v > CAL_STEPS[s]) i = s+1;
+    return CAL_COLORS[Math.min(i, CAL_COLORS.length-1)];
+}
+
+// ─────────────────────────────────────────────────────────────
+//  PROCESS
+//  One ordered pass over ~112k scrobbles builds every aggregate the page
+//  draws. Everything returned here is plain JSON so the whole result can be
+//  cached in localStorage and redrawn instantly on a repeat visit.
+// ─────────────────────────────────────────────────────────────
+function processData(recs) {
+    recs.sort((a,b) => a.t - b.t);
+    const first = recs[0].t, last = recs[recs.length-1].t;
+
+    // ── counters ──────────────────────────────────────────────
+    const artistPlays = new Map(), trackPlays = new Map(), albumPlays = new Map();
+    const artistFirst = new Map(), artistLast = new Map();
+    const perDay = new Map(), perMonth = new Map();
+    const hourAll = new Array(24).fill(0);
+    const hourWd  = new Array(24).fill(0);
+    const hourWe  = new Array(24).fill(0);
+    const weekday = new Array(7).fill(0);
+    const monthRate = new Array(12).fill(0);
+    const yearPlays = new Map();
+    const hourYear = new Map();          // year -> [24]
+    const artistYear = new Map();        // artist -> Map(year -> plays)
+    let wdTotal = 0, weTotal = 0, eraTotal = 0, sameAlbumAdj = 0;
+
+    for (const r of recs) {
+        const d = r.t, y = d.getFullYear(), h = d.getHours();
+        bump(artistPlays, r.ar);
+        bump(trackPlays, r.ar + ' \u0000 ' + r.tr);
+        if (r.al) bump(albumPlays, r.ar + ' \u0000 ' + r.al);
+        if (!artistFirst.has(r.ar)) artistFirst.set(r.ar, d.getTime());
+        artistLast.set(r.ar, d.getTime());
+        bump(perDay, ymd(d));
+        bump(perMonth, ym(d));
+        bump(yearPlays, y);
+        hourAll[h]++;
+        weekday[(d.getDay()+6) % 7]++;
+
+        if (d >= ERA_START) {
+            eraTotal++;
+            monthRate[d.getMonth()]++;
+            const wknd = d.getDay() === 0 || d.getDay() === 6;
+            if (wknd) { hourWe[h]++; weTotal++; } else { hourWd[h]++; wdTotal++; }
+            if (!hourYear.has(y)) hourYear.set(y, new Array(24).fill(0));
+            hourYear.get(y)[h]++;
+        }
+        if (!artistYear.has(r.ar)) artistYear.set(r.ar, new Map());
+        bump(artistYear.get(r.ar), y);
+    }
+
+    // Consecutive plays from the same album, within one sitting: the signature
+    // of playing a record start to finish rather than shuffling a playlist.
+    const gapMs = SESSION_GAP_MIN * 60000;
+    for (let i = 1; i < recs.length; i++) {
+        const p = recs[i-1], n = recs[i];
+        if (n.t - p.t < gapMs && p.al && p.al === n.al && p.ar === n.ar) sameAlbumAdj++;
+    }
+
+    // ── sessions ─────────────────────────────────────────────
+    const sessions = [];
+    let cur = [recs[0]];
+    for (let i = 1; i < recs.length; i++) {
+        if (recs[i].t - recs[i-1].t > gapMs) { sessions.push(cur); cur = [recs[i]]; }
+        else cur.push(recs[i]);
+    }
+    sessions.push(cur);
+    const sLens = sessions.map(s => s.length).sort((a,b) => a-b);
+    // Bucketed for display; the tail is long enough that a raw histogram is
+    // unreadable past about 25.
+    const sBuckets = [
+        { label:'1',      lo:1,  hi:1 },
+        { label:'2–3',    lo:2,  hi:3 },
+        { label:'4–7',    lo:4,  hi:7 },
+        { label:'8–15',   lo:8,  hi:15 },
+        { label:'16–30',  lo:16, hi:30 },
+        { label:'31–60',  lo:31, hi:60 },
+        { label:'60+',    lo:61, hi:1e9 }
+    ].map(b => ({ label:b.label, n:sLens.filter(v => v >= b.lo && v <= b.hi).length }));
+    const longest = sessions.reduce((a,b) => b.length > a.length ? b : a, sessions[0]);
+    const monoSessions = sessions.filter(s =>
+        s.length >= 8 && s.every(x => x.ar === s[0].ar)).length;
+
+    // ── daily streak ─────────────────────────────────────────
+    const dayKeys = [...perDay.keys()].sort();
+    let bestStreak = 1, run = 1, bestEnd = dayKeys[0];
+    for (let i = 1; i < dayKeys.length; i++) {
+        const prev = new Date(dayKeys[i-1] + 'T00:00:00');
+        const now  = new Date(dayKeys[i]   + 'T00:00:00');
+        if (Math.round((now-prev)/86400000) === 1) {
+            run++;
+            if (run > bestStreak) { bestStreak = run; bestEnd = dayKeys[i]; }
+        } else run = 1;
+    }
+
+    // ── artists ──────────────────────────────────────────────
+    const artistsRanked = [...artistPlays.entries()].sort((a,b) => b[1]-a[1]);
+    const topArtists = artistsRanked.slice(0, TOP_N_ARTISTS).map(([name, plays]) => ({
+        name, plays,
+        first: artistFirst.get(name),
+        last:  artistLast.get(name),
+        share: +pct(plays, recs.length).toFixed(2)
+    }));
+    // How concentrated the whole library is: how few artists cover half of it.
+    let acc = 0, half = 0, eighty = 0;
+    for (let i = 0; i < artistsRanked.length; i++) {
+        acc += artistsRanked[i][1];
+        if (!half   && acc >= recs.length*0.5) half = i+1;
+        if (!eighty && acc >= recs.length*0.8) { eighty = i+1; break; }
+    }
+    const onePlay = artistsRanked.filter(a => a[1] === 1).length;
+    // Cumulative-share curve, sampled — 10k points would draw as a solid block.
+    const lorenz = [];
+    acc = 0;
+    for (let i = 0; i < artistsRanked.length; i++) {
+        acc += artistsRanked[i][1];
+        if (i < 50 || i % 40 === 0 || i === artistsRanked.length-1)
+            lorenz.push({ x:+pct(i+1, artistsRanked.length).toFixed(3), y:+pct(acc, recs.length).toFixed(2) });
+    }
+
+    // ── years, eras, discovery ───────────────────────────────
+    const years = [...yearPlays.keys()].filter(y => yearPlays.get(y) >= MIN_YEAR_SCROBBLES).sort();
+    const newArtistsByYear = new Map();
+    for (const [name, ts] of artistFirst) bump(newArtistsByYear, new Date(ts).getFullYear());
+    const discovery = years.map(y => {
+        // Share of the year's plays that went to artists heard for the first
+        // time that same year — "how much of this year was new to me".
+        let fresh = 0;
+        for (const [name, ym2] of artistYear) {
+            const n = ym2.get(y);
+            if (n && new Date(artistFirst.get(name)).getFullYear() === y) fresh += n;
+        }
+        return { year:y, newArtists:newArtistsByYear.get(y) || 0,
+                 novelty:+pct(fresh, yearPlays.get(y)).toFixed(1),
+                 total:yearPlays.get(y) };
+    });
+    // Defining artist of each year, by share of that year.
+    const eras = years.map(y => {
+        let bestA = null, bestN = 0;
+        for (const [name, ym2] of artistYear) {
+            const n = ym2.get(y) || 0;
+            if (n > bestN) { bestN = n; bestA = name; }
+        }
+        return { year:y, artist:bestA, plays:bestN, share:+pct(bestN, yearPlays.get(y)).toFixed(1) };
+    });
+    // Migration lines: the biggest artists, as a share of each year.
+    const eraArtists = artistsRanked.slice(0, ERA_ARTISTS).map(([name]) => name);
+    const migration = eraArtists.map(name => ({
+        name,
+        series: years.map(y => +pct(artistYear.get(name).get(y) || 0, yearPlays.get(y)).toFixed(2))
+    }));
+    // Comet: when an artist entered the library vs how big they became.
+    const comet = artistsRanked.filter(([,n]) => n >= MIN_ARTIST_PLAYS).map(([name, plays]) => ({
+        name, plays, first:artistFirst.get(name),
+        months: Math.max(1, Math.round((artistLast.get(name)-artistFirst.get(name))/2592000000))
+    }));
+
+    // ── binge days ───────────────────────────────────────────
+    const dayArtists = new Map();
+    for (const r of recs) {
+        const k = ymd(r.t);
+        if (!dayArtists.has(k)) dayArtists.set(k, new Map());
+        bump(dayArtists.get(k), r.ar);
+    }
+    const binges = [];
+    for (const [day, m] of dayArtists) {
+        const total = perDay.get(day);
+        if (total < BINGE_MIN_PLAYS) continue;
+        const [a, n] = topOf(m, 1)[0];
+        if (n/total >= BINGE_MIN_SHARE) binges.push({ day, artist:a, plays:n, total });
+    }
+    binges.sort((a,b) => b.plays-a.plays);
+
+    // ── hour-of-day, as percentages of their own group ───────
+    const clock = {
+        weekday: hourWd.map(v => +pct(v, wdTotal).toFixed(2)),
+        weekend: hourWe.map(v => +pct(v, weTotal).toFixed(2)),
+        allPct:  hourAll.map(v => +pct(v, recs.length).toFixed(2)),
+        counts:  hourAll,
+        wdTotal, weTotal
+    };
+    // The morning trough (08:00–11:59) against the small hours (03:00–06:59).
+    // If the trough were sleep it would deepen at the weekend, not fill in.
+    const sum = (arr, lo, hi) => arr.slice(lo, hi).reduce((a,b) => a+b, 0);
+    const mWd = sum(hourWd, 8, 12), mWe = sum(hourWe, 8, 12);
+    const nWd = sum(hourWd, 3, 7),  nWe = sum(hourWe, 3, 7);
+    const eWd = sum(hourWd, 17, 20), eWe = sum(hourWe, 17, 20);
+    clock.test = {
+        morningWd:+pct(mWd, wdTotal).toFixed(2), morningWe:+pct(mWe, weTotal).toFixed(2),
+        morningRatio:+(pct(mWe, weTotal)/pct(mWd, wdTotal)).toFixed(2),
+        morningZ:+zProp(mWd, wdTotal, mWe, weTotal).toFixed(1),
+        nightWd:+pct(nWd, wdTotal).toFixed(2), nightWe:+pct(nWe, weTotal).toFixed(2),
+        nightRatio:+(pct(nWe, weTotal)/pct(nWd, wdTotal)).toFixed(2),
+        eveWd:+pct(eWd, wdTotal).toFixed(2), eveWe:+pct(eWe, weTotal).toFixed(2),
+        eveZ:+zProp(eWd, wdTotal, eWe, weTotal).toFixed(1)
+    };
+    const quietH = hourAll.indexOf(Math.min(...hourAll));
+    const peakH  = hourAll.indexOf(Math.max(...hourAll));
+    clock.quietHour = quietH; clock.peakHour = peakH;
+    clock.peakRatio = +(hourAll[peakH]/Math.max(1, hourAll[quietH])).toFixed(1);
+
+    // Hour × year, each year normalised to itself so a busy year does not
+    // simply look brighter than a quiet one.
+    const hourYearRows = [...hourYear.keys()].sort().map(y => {
+        const arr = hourYear.get(y), tot = arr.reduce((a,b) => a+b, 0);
+        return { year:y, pct:arr.map(v => +pct(v, tot).toFixed(2)), total:tot };
+    });
+
+    // ── calendar + monthly series ────────────────────────────
+    const monthKeys = [...perMonth.keys()].sort();
+    const monthly = monthKeys.map(k => ({ k, n:perMonth.get(k) }));
+    const calYears = [];
+    for (let y = ERA_START.getFullYear(); y <= last.getFullYear(); y++) {
+        const cells = [];
+        let total = 0, active = 0;
+        const d = new Date(y, 0, 1), end = new Date(y, 11, 31);
+        for (; d <= end; d.setDate(d.getDate()+1)) {
+            const k = ymd(d), v = perDay.get(k) || 0;
+            // A day is "out of scope" if it falls before the continuous era began
+            // or after the export ends. Counting either against the active-day
+            // percentage would understate it: the first partial year would be
+            // charged for 97 days that predate the record entirely.
+            const scope = d >= ERA_START && d <= last;
+            cells.push({ k, v, dow:(d.getDay()+6)%7, scope });
+            if (scope) { total += v; if (v) active++; }
+        }
+        const inYear = cells.filter(c => c.scope).length;
+        calYears.push({ year:y, cells, total, active, days:inYear });
+    }
+
+    // Seasonality has to be a rate: calendar months differ in length and the
+    // record stops partway through its final month, so raw monthly totals would
+    // punish February for being short and the last month for being incomplete.
+    const monthDays = new Array(12).fill(0);
+    for (const d = new Date(ERA_START.getTime()); d <= last; d.setDate(d.getDate()+1))
+        monthDays[d.getMonth()]++;
+    const monthRatePerDay = monthRate.map((v,i) => +(v/Math.max(1, monthDays[i])).toFixed(2));
+
+    // Days-of-music estimate, stated as an estimate everywhere it appears.
+    const estHours = recs.length * EST_TRACK_MIN / 60;
+    const eraDays  = Math.round((last - ERA_START)/86400000) + 1;
+    const eraActive = dayKeys.filter(k => new Date(k+'T00:00:00') >= ERA_START).length;
+
+    return {
+        totals: {
+            scrobbles: recs.length,
+            artists: artistPlays.size,
+            tracks: trackPlays.size,
+            albums: albumPlays.size,
+            first: first.getTime(), last: last.getTime(),
+            estHours: Math.round(estHours),
+            estDays: +(estHours/24).toFixed(0),
+            eraDays, eraActive, eraTotal,
+            eraActivePct: +pct(eraActive, eraDays).toFixed(1),
+            perDay: +(eraTotal/eraDays).toFixed(1),
+            bestStreak, bestEnd,
+            half, eighty, onePlay,
+            onePlayPct: +pct(onePlay, artistPlays.size).toFixed(0),
+            sameAlbumPct: +pct(sameAlbumAdj, recs.length-1).toFixed(1),
+            sessions: sessions.length,
+            sessMedian: median(sLens),
+            sessP90: quantile(sLens, 0.9),
+            sessMax: sLens[sLens.length-1],
+            monoSessions,
+            longestSession: {
+                n: longest.length,
+                start: longest[0].t.getTime(),
+                end: longest[longest.length-1].t.getTime(),
+                top: topOf(longest.reduce((m,x) => (bump(m, x.ar), m), new Map()), 3)
+            }
+        },
+        clock, hourYearRows, weekday,
+        monthly, calYears,
+        sessionBuckets: sBuckets,
+        monthRatePerDay,
+        topArtists,
+        topTracks: topOf(trackPlays, 12).map(([k,n]) => { const [ar,tr] = k.split(' \u0000 '); return { ar, tr, n }; }),
+        topAlbums: topOf(albumPlays, 12).map(([k,n]) => { const [ar,al] = k.split(' \u0000 '); return { ar, al, n }; }),
+        years, eras, discovery, migration, comet, lorenz,
+        binges: binges.slice(0, 12), bingeCount: binges.length
+    };
+}
+
+// ─────────────────────────────────────────────────────────────
+//  RENDER
+// ─────────────────────────────────────────────────────────────
+const fmtDate = ts => new Date(ts).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+const fmtMon  = ts => new Date(ts).toLocaleDateString('en-US', { month:'short', year:'numeric' });
+const hourLabel = h => h === 0 ? '12a' : h < 12 ? h+'a' : h === 12 ? '12p' : (h-12)+'p';
+const hourFull  = h => `${String(h).padStart(2,'0')}:00`;
+
+function renderDashboard(D, lastModified) {
+    const T = D.totals, K = D.clock;
+
+    const cards = [
+        { v:comma(T.scrobbles),      l:'Scrobbles',     s:`${fmtMon(T.first)} – ${fmtMon(T.last)}` },
+        { v:comma(T.artists),        l:'Artists',       s:`${comma(T.tracks)} distinct tracks` },
+        { v:comma(T.albums),         l:'Albums',        s:`${T.sameAlbumPct}% played in sequence` },
+        { v:comma(T.estDays),        l:'Days of music', s:`≈${comma(T.estHours)} hours, estimated` },
+        { v:T.eraActivePct + '%',    l:'Days with music', s:`since ${ERA_START_TEXT}`, accent:true },
+        { v:comma(T.bestStreak),     l:'Longest streak', s:`days, to ${fmtDate(new Date(T.bestEnd+'T00:00:00').getTime())}` },
+        { v:T.perDay,                l:'Scrobbles / day', s:`${comma(T.sessions)} listening sittings` },
+        { v:comma(T.half),           l:'Artists = half of it', s:`of ${comma(T.artists)} — ${(100*T.half/T.artists).toFixed(1)}%` }
+    ];
+
+    app.innerHTML = `
+    <div class="header">
+        <h1>Listening History</h1>
+        <div class="header-meta">
+            <span class="subtitle">${comma(T.scrobbles)} scrobbles from
+                <a href="https://www.last.fm/user/kambizkamrani">Last.fm</a>,
+                ${fmtMon(T.first)} to ${fmtMon(T.last)}</span>
+            <span class="nav-link">
+                <a href="/">Home</a> &middot; <a href="/cv/">CV</a> &middot;
+                <a href="/blog/">Blog</a> &middot; <a href="/exercise/">Exercise</a>
+            </span>
+        </div>
+        <div class="last-updated">Data last updated ${lastModified ? fmtDate(Date.parse(lastModified)) : '—'}</div>
+    </div>
+
+    <div class="stats-grid">
+        ${cards.map(c => `
+            <div class="stat-card${c.accent ? ' accent' : ''}">
+                <div class="value">${c.v}</div>
+                <div class="label">${c.l}</div>
+                <div class="sub">${c.s}</div>
+            </div>`).join('')}
+    </div>
+
+    <!-- ── 1. THE CLOCK ─────────────────────────────────────── -->
+    <div class="section-head">
+        <h2>The Shape of a Day</h2>
+        <p>When the music plays — and, more tellingly, when it stops.</p>
+    </div>
+
+    <div class="chart-container feature">
+        <h2>A 24-hour clock, weekday against weekend</h2>
+        <p class="description">
+            Each ring is one hour of the day, midnight at the top, running clockwise.
+            Both series are drawn as a share of their own group, so the weekend —
+            two days against five — is not simply a smaller version of the weekday
+            shape. ${ERA_START_TEXT} onward.
+        </p>
+        <div class="two-col">
+            <div><canvas id="clockChart"></canvas></div>
+            <div><canvas id="clockLineChart"></canvas></div>
+        </div>
+        <div class="takeaway" id="clockTakeaway"></div>
+        <div class="method-note">
+            <b>On the timestamps.</b> Last.fm exports carry no timezone, so these
+            are read exactly as written. Two things suggest they are already local
+            rather than UTC: the trough sits at the same clock hour in summer and
+            winter — a UTC series would slide an hour with daylight saving — and
+            the weekday/weekend split below only makes sense on a local clock.
+            Either way the argument that follows rests on the <i>difference</i>
+            between weekday and weekend, which no fixed offset can manufacture.
+        </div>
+    </div>
+
+    <div class="insight-box" id="clockInsight"></div>
+
+    <div class="chart-container">
+        <h2>The trough holds, year after year</h2>
+        <p class="description">
+            Each row is one year, normalised to itself, so a heavy year does not simply
+            read as a darker band. Darker means a larger share of that year's listening
+            fell in that hour. The pale band down the middle is the same gap, every
+            year, for eight years.
+        </p>
+        <div class="hm" id="hourYearHM"></div>
+    </div>
+
+    <div class="two-col">
+        <div class="chart-container">
+            <h2>Across the week</h2>
+            <p class="description">
+                Total scrobbles by day of week. The week is remarkably flat — the
+                structure in this data is in the hours, not the days.
+            </p>
+            <canvas id="weekdayChart"></canvas>
+        </div>
+        <div class="chart-container">
+            <h2>Across the year</h2>
+            <p class="description">
+                Scrobbles per day of each calendar month, pooled across years — so a
+                short February is not penalised for being short.
+            </p>
+            <canvas id="seasonChart"></canvas>
+        </div>
+    </div>
+
+    <!-- ── 2. FIFTEEN YEARS ─────────────────────────────────── -->
+    <div class="section-head">
+        <h2>Fifteen Years, Two of Them Continuous</h2>
+        <p>An account opened in 2011, abandoned repeatedly, then kept without a real break.</p>
+    </div>
+
+    <div class="chart-container">
+        <h2>Scrobbles per month</h2>
+        <p class="description">
+            The whole record. The flat stretch on the left is not quiet listening —
+            it is an unused account: four separate silences of more than a year.
+        </p>
+        <canvas id="monthlyChart"></canvas>
+        <div class="method-note">
+            <b>Why the split matters.</b> 578 scrobbles fall before ${ERA_START_TEXT};
+            ${comma(T.eraTotal)} fall after. Every rate on this page — per day, percent
+            of days active — is quoted from the continuous era only. Averaging across
+            a five-year silence would describe a listener who does not exist.
+        </div>
+    </div>
+
+    <div class="chart-container">
+        <h2>Every day since ${ERA_START.getFullYear()}</h2>
+        <p class="description">
+            One square per day, darker with more scrobbles. ${T.eraActivePct}% of days
+            since ${ERA_START_TEXT} have at least one.
+        </p>
+        <div id="calendar"></div>
+        <div class="cal-legend" id="calLegend"></div>
+    </div>
+
+    <!-- ── 3. TASTE MIGRATION ───────────────────────────────── -->
+    <div class="section-head">
+        <h2>Taste Migrates</h2>
+        <p>No artist holds the top spot for long. The library keeps moving.</p>
+    </div>
+
+    <div class="chart-container">
+        <h2>The artist who defined each year</h2>
+        <p class="description">Most-played artist per year, with their share of that year.</p>
+        <div class="ribbon" id="eraRibbon"></div>
+    </div>
+
+    <div class="chart-container tall">
+        <h2>Where the big artists rose and fell</h2>
+        <p class="description">
+            The ${ERA_ARTISTS} most-played artists overall, each as a share of the year.
+            Read across: almost every line is a wave, not a plateau.
+        </p>
+        <canvas id="migrationChart"></canvas>
+    </div>
+
+    <div class="chart-container">
+        <h2>When they arrived, and how far they got</h2>
+        <p class="description">
+            Every artist with ${MIN_ARTIST_PLAYS}+ plays, positioned by the date they
+            were first heard. High and to the right is a recent obsession; high and to
+            the left is one that lasted.
+        </p>
+        <canvas id="cometChart"></canvas>
+        <div class="method-note">
+            <b>Reading the shape.</b> An artist first heard long ago has had more time
+            to accumulate plays, so the upper-left is partly a function of age. The
+            names that matter are the ones sitting high on the <i>right</i>: they
+            reached the same totals in a fraction of the time.
+        </div>
+    </div>
+
+    <!-- ── 4. DISCOVERY AND COMFORT ─────────────────────────── -->
+    <div class="section-head">
+        <h2>Discovery and Comfort</h2>
+        <p>Casting a wider net every year, while leaning harder on the favourites.</p>
+    </div>
+
+    <div class="two-col">
+        <div class="chart-container">
+            <h2>New artists found vs. how much of the year was new</h2>
+            <p class="description">
+                Bars: artists heard for the first time that year. Line: the share of
+                that year's plays that went to those new arrivals.
+            </p>
+            <canvas id="discoveryChart"></canvas>
+        </div>
+        <div class="chart-container">
+            <h2>How concentrated the library is</h2>
+            <p class="description">
+                Artists ranked by plays, left to right, against the cumulative share of
+                all listening. The steeper the curve, the smaller the true core.
+            </p>
+            <canvas id="lorenzChart"></canvas>
+        </div>
+    </div>
+
+    <div class="insight-box" id="discoveryInsight"></div>
+
+    <!-- ── 5. HOW HE LISTENS ────────────────────────────────── -->
+    <div class="section-head">
+        <h2>The Anatomy of a Sitting</h2>
+        <p>Grouping scrobbles into sittings — any gap over ${SESSION_GAP_MIN} minutes starts a new one.</p>
+    </div>
+
+    <div class="chart-container">
+        <h2>How long a sitting runs</h2>
+        <p class="description">
+            ${comma(T.sessions)} sittings. The median is ${T.sessMedian} tracks, but the
+            tail is long: the top 10% run past ${T.sessP90}, and the longest reaches
+            ${T.sessMax}.
+        </p>
+        <canvas id="sessionChart"></canvas>
+    </div>
+
+    <div class="chart-container">
+        <h2>The deep dives</h2>
+        <p class="description">
+            ${T.bingeCount} days where a single artist took at least half of at least
+            ${BINGE_MIN_PLAYS} plays. These are the days a record went on and stayed on.
+        </p>
+        <table class="rank" id="bingeTable"></table>
+        <div class="method-note">
+            <b>Also in the tail:</b> ${comma(T.monoSessions)} sittings of eight or more
+            tracks without a single change of artist, and one unbroken run of
+            ${T.longestSession.n} tracks from ${fmtDate(T.longestSession.start)} into the
+            next morning.
+        </div>
+    </div>
+
+    <!-- ── 6. THE CANON ─────────────────────────────────────── -->
+    <div class="section-head">
+        <h2>The Canon</h2>
+        <p>What ${comma(T.scrobbles)} plays actually add up to.</p>
+    </div>
+
+    <div class="chart-container">
+        <h2>Most-played artists</h2>
+        <p class="description">All time, with the date each entered the library.</p>
+        <table class="rank" id="artistTable"></table>
+    </div>
+
+    <div class="two-col">
+        <div class="chart-container">
+            <h2>Most-played tracks</h2>
+            <p class="description">Single songs, all time.</p>
+            <table class="rank" id="trackTable"></table>
+        </div>
+        <div class="chart-container">
+            <h2>Most-played albums</h2>
+            <p class="description">Counted across every track on the record.</p>
+            <table class="rank" id="albumTable"></table>
+        </div>
+    </div>
+
+    <div class="footer">
+        Built from a Last.fm API export &middot; parsed and charted in the browser &middot;
+        <a href="https://www.last.fm/user/kambizkamrani">last.fm/user/kambizkamrani</a>
+    </div>
+    `;
+
+    drawClock(D);
+    drawHourYear(D);
+    drawWeekday(D);
+    drawMonthly(D);
+    drawCalendar(D);
+    drawEras(D);
+    drawMigration(D);
+    drawComet(D);
+    drawDiscovery(D);
+    drawLorenz(D);
+    drawSessions(D);
+    drawSeason(D);
+    drawTables(D);
+}
+
+// ─────────────────────────────────────────────────────────────
+//  CHART DEFAULTS
+// ─────────────────────────────────────────────────────────────
+Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif";
+Chart.defaults.color = C.mid;
+Chart.defaults.font.size = 11;
+
+const GRID  = { color:'#eee', drawTicks:false };
+const LEGEND_TOP = { position:'top', align:'start',
+    labels:{ boxWidth:10, boxHeight:10, usePointStyle:true, pointStyle:'rect', padding:14 } };
+
+// ─────────────────────────────────────────────────────────────
+//  1. THE CLOCK
+// ─────────────────────────────────────────────────────────────
+function drawClock(D) {
+    const K = D.clock, t = K.test;
+
+    // Radar, 24 spokes, midnight at top. Only every third hour is labelled;
+    // 24 labels around a small circle is unreadable.
+    new Chart(document.getElementById('clockChart'), {
+        type:'radar',
+        data:{
+            labels: Array.from({length:24}, (_,h) => h % 3 === 0 ? hourLabel(h) : ''),
+            datasets:[
+                { label:'Weekday (Mon–Fri)', data:K.weekday,
+                  borderColor:C.black, backgroundColor:'rgba(0,0,0,.10)',
+                  borderWidth:2, pointRadius:0, pointHoverRadius:4, pointHoverBackgroundColor:C.black },
+                { label:'Weekend (Sat–Sun)', data:K.weekend,
+                  borderColor:C.red, backgroundColor:'rgba(192,57,43,.10)',
+                  borderWidth:2, pointRadius:0, pointHoverRadius:4, pointHoverBackgroundColor:C.red }
+            ]
+        },
+        options:{
+            responsive:true, maintainAspectRatio:true, aspectRatio:1,
+            plugins:{
+                legend:LEGEND_TOP,
+                tooltip:{
+                    callbacks:{
+                        title: items => hourFull(items[0].dataIndex) + '–' + hourFull((items[0].dataIndex+1)%24),
+                        label: c => `${c.dataset.label}: ${c.raw.toFixed(2)}%`
+                    }
+                }
+            },
+            scales:{
+                r:{
+                    beginAtZero:true,
+                    angleLines:{ color:'#eee' },
+                    grid:{ color:'#e8e8e8' },
+                    pointLabels:{ font:{ size:10 }, color:C.light },
+                    ticks:{ display:false }
+                }
+            }
+        }
+    });
+
+    // The same two series unrolled, where the gap is easiest to read.
+    new Chart(document.getElementById('clockLineChart'), {
+        type:'line',
+        data:{
+            labels: Array.from({length:24}, (_,h) => hourLabel(h)),
+            datasets:[
+                { label:'Weekday', data:K.weekday, borderColor:C.black,
+                  backgroundColor:'rgba(0,0,0,.06)', borderWidth:2, fill:true,
+                  tension:.35, pointRadius:0, pointHoverRadius:4 },
+                { label:'Weekend', data:K.weekend, borderColor:C.red,
+                  backgroundColor:'rgba(192,57,43,.06)', borderWidth:2, fill:true,
+                  tension:.35, pointRadius:0, pointHoverRadius:4 }
+            ]
+        },
+        options:{
+            responsive:true, maintainAspectRatio:true, aspectRatio:1,
+            interaction:{ mode:'index', intersect:false },
+            plugins:{
+                legend:LEGEND_TOP,
+                tooltip:{ callbacks:{
+                    title: items => hourFull(items[0].dataIndex) + '–' + hourFull((items[0].dataIndex+1)%24),
+                    label: c => `${c.dataset.label}: ${c.raw.toFixed(2)}%`
+                }}
+            },
+            scales:{
+                x:{ grid:{ display:false }, ticks:{ maxRotation:0, autoSkipPadding:12 } },
+                y:{ beginAtZero:true, grid:GRID, title:{ display:true, text:'% of that group’s scrobbles' },
+                    ticks:{ callback:v => v + '%' } }
+            }
+        }
+    });
+
+    document.getElementById('clockTakeaway').innerHTML = `
+        <div><div class="k">Quietest hour</div><div class="v">${hourFull(K.quietHour)}</div></div>
+        <div><div class="k">Busiest hour</div><div class="v">${hourFull(K.peakHour)}</div></div>
+        <div><div class="k">Peak vs. trough</div><div class="v up">${K.peakRatio}&times;</div></div>
+        <div><div class="k">08–12 weekend lift</div><div class="v up">${t.morningRatio}&times;</div></div>
+        <div><div class="k">03–07 weekend lift</div><div class="v">${t.nightRatio}&times;</div></div>`;
+
+    document.getElementById('clockInsight').innerHTML = `
+        <strong>The most interesting thing in this data is a hole.</strong>
+        Listening collapses between ${hourFull(8)} and noon — hour ${hourFull(K.quietHour)}
+        carries ${K.allPct[K.quietHour].toFixed(2)}% of all scrobbles, against
+        ${K.allPct[K.peakHour].toFixed(2)}% at ${hourFull(K.peakHour)}, a
+        ${K.peakRatio}-fold difference. The obvious explanation is sleep, and the
+        obvious explanation is wrong.<br><br>
+        Sleep does not take weekends off. This trough does. On Saturday and Sunday the
+        ${hourFull(8)}–noon window carries ${t.morningWe}% of the day's listening against
+        ${t.morningWd}% on a weekday — <strong>${t.morningRatio}&times; more</strong>, a gap far
+        too large to be chance (z&nbsp;=&nbsp;${t.morningZ}). Meanwhile the genuine small
+        hours, ${hourFull(3)}–${hourFull(7)}, move the other way: ${t.nightWe}% at the
+        weekend against ${t.nightWd}% on a weekday, ${t.nightRatio}&times; — slightly
+        <em>less</em>, because a weekday that starts early starts with music on.
+        And weekend evenings, ${hourFull(17)}–${hourFull(20)}, swell from ${t.eveWd}% to
+        ${t.eveWe}% (z&nbsp;=&nbsp;${t.eveZ}).<br><br>
+        A trough that fills in on weekends, beside a sleep window that does not, is not
+        rest. It is obligation. For a surgeon, the missing hours are the ones spent
+        scrubbed in, where nobody is choosing the music — and the two peaks either side
+        are the drive in and the long decompression after. <strong>The negative space in
+        that chart is the operating room.</strong>`;
+}
+
+// Hour-by-year heatmap. Each row normalised to its own maximum so the question
+// answered is "when did that year listen", not "how much did that year listen".
+function drawHourYear(D) {
+    const rows = D.hourYearRows;
+    let html = '<table><tr><th class="rowhead"></th>';
+    for (let h = 0; h < 24; h++) html += `<th>${h % 2 === 0 ? hourLabel(h) : ''}</th>`;
+    html += '</tr>';
+    for (const r of rows) {
+        const mx = Math.max(...r.pct);
+        html += `<tr><th class="rowhead">${r.year}</th>`;
+        for (let h = 0; h < 24; h++) {
+            const f = mx ? r.pct[h]/mx : 0;
+            // Single-hue ramp: white to black, gamma-shaped so the low end stays legible.
+            const l = Math.round(255 - 235*Math.pow(f, .72));
+            html += `<td><div class="c" style="background:rgb(${l},${l},${l})" `
+                 +  `title="${r.year} ${hourFull(h)} — ${r.pct[h].toFixed(2)}% of the year"></div></td>`;
+        }
+        html += '</tr>';
+    }
+    html += '</table>';
+    document.getElementById('hourYearHM').innerHTML = html;
+}
+
+function drawWeekday(D) {
+    new Chart(document.getElementById('weekdayChart'), {
+        type:'bar',
+        data:{ labels:DAYS, datasets:[{ label:'Scrobbles', data:D.weekday,
+               backgroundColor:D.weekday.map((_,i) => i >= 5 ? C.red : C.dark), borderWidth:0 }] },
+        options:{
+            responsive:true, maintainAspectRatio:false,
+            plugins:{ legend:{ display:false },
+                      tooltip:{ callbacks:{ label: c => comma(c.raw) + ' scrobbles' } } },
+            scales:{ x:{ grid:{ display:false } },
+                     y:{ beginAtZero:true, grid:GRID, ticks:{ callback:v => (v/1000) + 'k' } } }
+        }
+    });
+}
+
+// ─────────────────────────────────────────────────────────────
+//  2. FIFTEEN YEARS
+// ─────────────────────────────────────────────────────────────
+// Shades the dormant years so the eye reads that stretch as "no account
+// activity" rather than "very quiet listening" — they are not the same claim.
+const dormantShade = {
+    id:'dormantShade',
+    beforeDatasetsDraw(chart, args, opts) {
+        const idx = opts.untilIndex;
+        if (idx == null || idx < 1) return;
+        const { ctx, chartArea:{ top, bottom }, scales:{ x } } = chart;
+        const x0 = x.getPixelForValue(0), x1 = x.getPixelForValue(idx);
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,.045)';
+        ctx.fillRect(x0, top, x1-x0, bottom-top);
+        ctx.strokeStyle = '#bbb'; ctx.setLineDash([4,3]); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x1, top); ctx.lineTo(x1, bottom); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#999'; ctx.font = '10px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        if (x1-x0 > 70) ctx.fillText('account largely dormant', (x0+x1)/2, top+14);
+        ctx.restore();
+    }
+};
+Chart.register(dormantShade);
+
+function drawMonthly(D) {
+    const labels = D.monthly.map(m => m.k);
+    const eraKey = `${ERA_START.getFullYear()}-${String(ERA_START.getMonth()+1).padStart(2,'0')}`;
+    new Chart(document.getElementById('monthlyChart'), {
+        type:'line',
+        data:{ labels, datasets:[{
+            label:'Scrobbles', data:D.monthly.map(m => m.n),
+            borderColor:C.black, backgroundColor:'rgba(0,0,0,.07)',
+            borderWidth:1.6, fill:true, tension:0, pointRadius:0, pointHoverRadius:4
+        }]},
+        options:{
+            responsive:true, maintainAspectRatio:false,
+            interaction:{ mode:'index', intersect:false },
+            plugins:{
+                legend:{ display:false },
+                dormantShade:{ untilIndex: labels.indexOf(eraKey) },
+                tooltip:{ callbacks:{
+                    title: items => fmtMon(new Date(items[0].label + '-01T00:00:00').getTime()),
+                    label: c => comma(c.raw) + ' scrobbles'
+                }}
+            },
+            scales:{
+                x:{ grid:{ display:false },
+                    ticks:{ maxRotation:0, autoSkip:true, maxTicksLimit:14,
+                            callback(v) { const l = this.getLabelForValue(v);
+                                          return l.endsWith('-01') ? l.slice(0,4) : ''; } } },
+                y:{ beginAtZero:true, grid:GRID, title:{ display:true, text:'Scrobbles per month' } }
+            }
+        }
+    });
+}
+
+function drawCalendar(D) {
+    const host = document.getElementById('calendar');
+    host.innerHTML = D.calYears.map(y => `
+        <div class="cal-year">
+            <div class="cal-head">
+                <span class="y">${y.year}</span>
+                <span class="s">${comma(y.total)} scrobbles &middot; ${y.active} of ${y.days} days
+                    (${pct(y.active, y.days).toFixed(0)}%)</span>
+            </div>
+            <div class="cal-grid">
+                ${y.cells.map(c => !c.scope
+                    ? '<div class="cal-cell" style="background:transparent"></div>'
+                    : `<div class="cal-cell" style="background:${calColor(c.v)}" title="${c.k} — ${c.v} scrobbles"></div>`
+                  ).join('')}
+            </div>
+        </div>`).join('');
+
+    const labels = ['0', '1–10', '11–30', '31–60', '61–120', '120+'];
+    document.getElementById('calLegend').innerHTML =
+        'Scrobbles in a day: ' +
+        CAL_COLORS.map((c,i) => `<i style="background:${c}"></i><span>${labels[i]}</span>`).join('');
+}
+
+// ─────────────────────────────────────────────────────────────
+//  3. TASTE MIGRATION
+// ─────────────────────────────────────────────────────────────
+function drawEras(D) {
+    document.getElementById('eraRibbon').innerHTML = D.eras.map(e => `
+        <div>
+            <div class="y">${e.year}</div>
+            <div class="a">${e.artist}</div>
+            <div class="p">${comma(e.plays)} plays &middot; ${e.share.toFixed(1)}%</div>
+        </div>`).join('');
+}
+
+function drawMigration(D) {
+    new Chart(document.getElementById('migrationChart'), {
+        type:'line',
+        data:{
+            labels:D.years,
+            datasets:D.migration.map((m, i) => ({
+                label:m.name, data:m.series,
+                borderColor:SERIES[i % SERIES.length],
+                backgroundColor:SERIES[i % SERIES.length],
+                borderWidth:2, tension:0,
+                pointRadius:2.5, pointHoverRadius:5, fill:false
+            }))
+        },
+        options:{
+            responsive:true, maintainAspectRatio:false,
+            interaction:{ mode:'nearest', axis:'x', intersect:false },
+            plugins:{
+                legend:{ position:'top', align:'start',
+                         labels:{ boxWidth:22, boxHeight:2, padding:12, font:{ size:11 } } },
+                tooltip:{ callbacks:{ label: c => `${c.dataset.label}: ${c.raw}% of ${c.label}` } }
+            },
+            scales:{
+                x:{ grid:{ display:false } },
+                y:{ beginAtZero:true, grid:GRID,
+                    title:{ display:true, text:'% of that year’s scrobbles' },
+                    ticks:{ callback:v => v + '%' } }
+            }
+        }
+    });
+}
+
+function drawComet(D) {
+    // Label only the handful big enough to name without the chart turning to soup.
+    const pts = D.comet.map(c => ({ x:c.first, y:c.plays, name:c.name }));
+    const nameThreshold = 700;
+    new Chart(document.getElementById('cometChart'), {
+        type:'scatter',
+        data:{ datasets:[{
+            label:'Artist', data:pts,
+            backgroundColor:pts.map(p => p.y >= nameThreshold ? 'rgba(192,57,43,.75)' : 'rgba(0,0,0,.32)'),
+            borderColor:'transparent',
+            pointRadius:pts.map(p => Math.max(3, Math.min(13, Math.sqrt(p.y)/6))),
+            pointHoverRadius:pts.map(p => Math.max(5, Math.min(15, Math.sqrt(p.y)/6 + 2)))
+        }]},
+        options:{
+            responsive:true, maintainAspectRatio:false,
+            plugins:{
+                legend:{ display:false },
+                tooltip:{ callbacks:{
+                    label: c => `${c.raw.name} — ${comma(c.raw.y)} plays, first heard ${fmtDate(c.raw.x)}`
+                }}
+            },
+            scales:{
+                x:{ type:'linear', grid:GRID,
+                    title:{ display:true, text:'First heard' },
+                    ticks:{ maxRotation:0, callback:v => new Date(v).getFullYear() } },
+                y:{ type:'logarithmic', grid:GRID,
+                    title:{ display:true, text:'Total plays (log scale)' },
+                    afterBuildTicks: ax => { ax.ticks = [150,250,500,1000,2000,3000].map(v => ({ value:v })); },
+                    ticks:{ autoSkip:false, callback:v => comma(v) } }
+            }
+        },
+        plugins:[{
+            id:'cometLabels',
+            afterDatasetsDraw(chart) {
+                const { ctx, chartArea:A } = chart;
+                const meta = chart.getDatasetMeta(0);
+                ctx.save();
+                ctx.font = '600 10px -apple-system, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                // Biggest first, so if space runs out it is a minor name that goes.
+                const order = pts.map((p,i) => i)
+                    .filter(i => pts[i].y >= nameThreshold)
+                    .sort((a,b) => pts[b].y - pts[a].y);
+                const placed = [];
+                const hits = r => placed.some(q =>
+                    r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0);
+
+                for (const i of order) {
+                    const p = pts[i], pt = meta.data[i];
+                    if (!pt) continue;
+                    const w = ctx.measureText(p.name).width, h = 12;
+                    const rad = (meta.data[i].options && meta.data[i].options.radius) || 6;
+                    // Above, below, then further out, then to either side.
+                    const cands = [
+                        [0, -(rad+9)], [0, rad+9], [0, -(rad+21)], [0, rad+21],
+                        [-(w/2+rad+6), 0], [w/2+rad+6, 0]
+                    ];
+                    let box = null;
+                    for (const [dx, dy] of cands) {
+                        const cx = pt.x + dx, cy = pt.y + dy;
+                        const r = { x0:cx-w/2-2, x1:cx+w/2+2, y0:cy-h/2, y1:cy+h/2, cx, cy };
+                        if (r.x0 < A.left || r.x1 > A.right || r.y0 < A.top || r.y1 > A.bottom) continue;
+                        if (hits(r)) continue;
+                        box = r; break;
+                    }
+                    if (!box) continue;
+                    placed.push(box);
+                    // Halo, so a label crossing a point or gridline stays readable.
+                    ctx.lineWidth = 3; ctx.strokeStyle = '#fff';
+                    ctx.strokeText(p.name, box.cx, box.cy);
+                    ctx.fillStyle = C.red;
+                    ctx.fillText(p.name, box.cx, box.cy);
+                }
+                ctx.restore();
+            }
+        }]
+    });
+}
+
+// ─────────────────────────────────────────────────────────────
+//  4. DISCOVERY AND COMFORT
+// ─────────────────────────────────────────────────────────────
+function drawDiscovery(D) {
+    const d = D.discovery;
+    new Chart(document.getElementById('discoveryChart'), {
+        data:{
+            labels:d.map(x => x.year),
+            datasets:[
+                { type:'bar', label:'New artists heard', data:d.map(x => x.newArtists),
+                  backgroundColor:C.dark, borderWidth:0, yAxisID:'y', order:2 },
+                { type:'line', label:'% of the year that was new', data:d.map(x => x.novelty),
+                  borderColor:C.red, backgroundColor:C.red, borderWidth:2.5,
+                  pointRadius:3, pointHoverRadius:6, tension:0, yAxisID:'y1', order:1 }
+            ]
+        },
+        options:{
+            responsive:true, maintainAspectRatio:false,
+            interaction:{ mode:'index', intersect:false },
+            plugins:{
+                legend:LEGEND_TOP,
+                tooltip:{ callbacks:{ label: c => c.dataset.yAxisID === 'y1'
+                    ? `${c.raw.toFixed(1)}% of plays were first-year artists`
+                    : `${comma(c.raw)} artists heard for the first time` } }
+            },
+            scales:{
+                x:{ grid:{ display:false } },
+                y:{ beginAtZero:true, position:'left', grid:GRID,
+                    title:{ display:true, text:'New artists' } },
+                y1:{ beginAtZero:true, position:'right', grid:{ display:false },
+                     title:{ display:true, text:'% of year that was new', color:C.red },
+                     ticks:{ color:C.red, callback:v => v + '%' } }
+            }
+        }
+    });
+
+    const f = D.discovery[0], l = D.discovery[D.discovery.length-1];
+    const T = D.totals;
+    document.getElementById('discoveryInsight').innerHTML = `
+        <strong>Two curves moving in opposite directions.</strong>
+        The number of new artists heard each year has roughly
+        ${(l.newArtists/f.newArtists).toFixed(1)}&times;'d since ${f.year} —
+        ${comma(f.newArtists)} then, ${comma(l.newArtists)} in ${l.year}. Yet the
+        share of listening those newcomers actually earn has fallen steadily, from
+        ${f.novelty.toFixed(1)}% to ${l.novelty.toFixed(1)}%. More is sampled; less of
+        it sticks.<br><br>
+        The concentration curve says the same thing from the other side.
+        <strong>${comma(T.half)} artists — ${(100*T.half/T.artists).toFixed(1)}% of the
+        ${comma(T.artists)} ever played — account for half of all listening</strong>, while
+        ${T.onePlayPct}% of artists (${comma(T.onePlay)} of them) were played exactly once
+        and never again. This is a library with a small, hard core and an enormous
+        exploratory fringe: most of what gets tried is tried once, and the few that
+        survive are played into the ground.`;
+}
+
+function drawLorenz(D) {
+    new Chart(document.getElementById('lorenzChart'), {
+        type:'line',
+        data:{ datasets:[
+            { label:'Cumulative share of plays', data:D.lorenz,
+              borderColor:C.black, backgroundColor:'rgba(0,0,0,.07)',
+              borderWidth:2, fill:true, pointRadius:0, tension:0 },
+            { label:'If every artist were played equally',
+              data:[{x:0,y:0},{x:100,y:100}],
+              borderColor:C.vlight, borderWidth:1.5, borderDash:[5,4],
+              pointRadius:0, fill:false }
+        ]},
+        options:{
+            responsive:true, maintainAspectRatio:false,
+            interaction:{ mode:'nearest', intersect:false },
+            plugins:{
+                legend:LEGEND_TOP,
+                tooltip:{ callbacks:{ label: c =>
+                    `Top ${c.raw.x.toFixed(1)}% of artists = ${c.raw.y.toFixed(1)}% of plays` } }
+            },
+            scales:{
+                x:{ type:'linear', min:0, max:100, grid:GRID,
+                    title:{ display:true, text:'% of artists, ranked by plays' },
+                    ticks:{ callback:v => v + '%' } },
+                y:{ min:0, max:100, grid:GRID,
+                    title:{ display:true, text:'% of all scrobbles' },
+                    ticks:{ callback:v => v + '%' } }
+            }
+        }
+    });
+}
+
+// ─────────────────────────────────────────────────────────────
+//  5. SITTINGS AND SEASONS
+// ─────────────────────────────────────────────────────────────
+function drawSessions(D) {
+    const b = D.sessionBuckets;
+    new Chart(document.getElementById('sessionChart'), {
+        type:'bar',
+        data:{ labels:b.map(x => x.label), datasets:[{
+            label:'Sittings', data:b.map(x => x.n), backgroundColor:C.dark, borderWidth:0 }]},
+        options:{
+            responsive:true, maintainAspectRatio:false,
+            plugins:{ legend:{ display:false },
+                      tooltip:{ callbacks:{ label: c =>
+                          `${comma(c.raw)} sittings (${pct(c.raw, D.totals.sessions).toFixed(1)}%)` } } },
+            scales:{
+                x:{ grid:{ display:false }, title:{ display:true, text:'Tracks in the sitting' } },
+                y:{ beginAtZero:true, grid:GRID, title:{ display:true, text:'Sittings' } }
+            }
+        }
+    });
+}
+
+function drawSeason(D) {
+    // Per-day rate, not raw totals: months differ in length, and the record
+    // stops partway through the final month.
+    const vals = D.monthRatePerDay;
+    new Chart(document.getElementById('seasonChart'), {
+        type:'bar',
+        data:{ labels:MONTHS, datasets:[{
+            label:'Scrobbles per day', data:vals,
+            backgroundColor:vals.map(v => v === Math.max(...vals) ? C.red : C.dark),
+            borderWidth:0 }]},
+        options:{
+            responsive:true, maintainAspectRatio:false,
+            plugins:{ legend:{ display:false },
+                      tooltip:{ callbacks:{ label: c => c.raw.toFixed(1) + ' scrobbles per day' } } },
+            scales:{
+                x:{ grid:{ display:false } },
+                y:{ beginAtZero:true, grid:GRID, title:{ display:true, text:'Scrobbles per day' } }
+            }
+        }
+    });
+}
+
+// ─────────────────────────────────────────────────────────────
+//  6. TABLES
+// ─────────────────────────────────────────────────────────────
+function drawTables(D) {
+    const T = D.totals;
+
+    const maxA = D.topArtists[0].plays;
+    document.getElementById('artistTable').innerHTML = `
+        <tr><th></th><th>Artist</th><th style="text-align:right">First heard</th>
+            <th style="text-align:right">Plays</th></tr>
+        ${D.topArtists.map((a,i) => `
+            <tr>
+                <td class="n">${i+1}</td>
+                <td>${esc(a.name)}<span class="bar" style="width:${100*a.plays/maxA}%"></span></td>
+                <td class="meta">${fmtDate(a.first)}</td>
+                <td class="v">${comma(a.plays)}<div class="sub" style="font-weight:400">${a.share}%</div></td>
+            </tr>`).join('')}`;
+
+    document.getElementById('trackTable').innerHTML = `
+        <tr><th></th><th>Track</th><th style="text-align:right">Plays</th></tr>
+        ${D.topTracks.map((t,i) => `
+            <tr>
+                <td class="n">${i+1}</td>
+                <td>${esc(t.tr)}<div class="sub">${esc(t.ar)}</div></td>
+                <td class="v">${comma(t.n)}</td>
+            </tr>`).join('')}`;
+
+    document.getElementById('albumTable').innerHTML = `
+        <tr><th></th><th>Album</th><th style="text-align:right">Plays</th></tr>
+        ${D.topAlbums.map((a,i) => `
+            <tr>
+                <td class="n">${i+1}</td>
+                <td>${esc(a.al)}<div class="sub">${esc(a.ar)}</div></td>
+                <td class="v">${comma(a.n)}</td>
+            </tr>`).join('')}`;
+
+    document.getElementById('bingeTable').innerHTML = `
+        <tr><th></th><th>Day</th><th>Artist</th>
+            <th style="text-align:right">Plays</th><th style="text-align:right">Share of day</th></tr>
+        ${D.binges.map((b,i) => `
+            <tr>
+                <td class="n">${i+1}</td>
+                <td class="meta" style="text-align:left">${fmtDate(new Date(b.day+'T00:00:00').getTime())}</td>
+                <td>${esc(b.artist)}</td>
+                <td class="v">${comma(b.plays)}<div class="sub" style="font-weight:400">of ${b.total}</div></td>
+                <td class="meta">${pct(b.plays, b.total).toFixed(0)}%</td>
+            </tr>`).join('')}`;
+}
+
+// Artist and track names are arbitrary user-supplied strings from Last.fm and
+// go into innerHTML, so they are escaped rather than trusted.
+function esc(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+        ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+
+// ─────────────────────────────────────────────────────────────
+//  BOOT
+// ─────────────────────────────────────────────────────────────
+async function boot() {
+    showLoading();
+
+    let csvText = null, lastModified = null;
+    try {
+        const res = await fetch(CSV_FILENAME, { cache:'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status} – ${res.statusText}`);
+        lastModified = res.headers.get('Last-Modified') || new Date().toISOString();
+        csvText = await res.text();
+    } catch (fetchErr) {
+        try {
+            const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+            if (cached?.data) {
+                console.warn('CSV fetch failed; using cache:', fetchErr.message);
+                renderDashboard(cached.data, cached.lastModified);
+                return;
+            }
+        } catch (_) {}
+        showError(fetchErr.message);
+        return;
+    }
+
+    const raw = parseCSV(csvText);
+    if (!raw.length) { showValidationError('The file is empty.'); return; }
+
+    // Tolerate a header row if a future export adds one.
+    let start = 0;
+    if (/artist/i.test(raw[0][0] || '') && !parseTS(raw[0][3])) start = 1;
+
+    const recs = [];
+    let skipped = 0;
+    for (let i = start; i < raw.length; i++) {
+        const r = raw[i];
+        if (r.length < 4) { skipped++; continue; }
+        const t = parseTS(r[3]);
+        if (!t || !r[0]) { skipped++; continue; }
+        recs.push({ ar:r[0].trim(), al:(r[1] || '').trim(), tr:(r[2] || '').trim(), t });
+    }
+    if (!recs.length) {
+        showValidationError(`No parseable rows in ${comma(raw.length)} lines. ` +
+            `Expected: artist, album, track, "DD Mon YYYY, HH:MM".`);
+        return;
+    }
+    if (skipped) console.warn(`Skipped ${skipped} unparseable row(s).`);
+
+    // Cache is keyed on the file's Last-Modified and row count, so a new export
+    // invalidates it automatically — drop in a fresh CSV and the page follows.
+    try {
+        const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+        if (cached?.lastModified === lastModified && cached?.rowCount === recs.length) {
+            console.log('Cache hit — skipping re-processing.');
+            renderDashboard(cached.data, cached.lastModified);
+            return;
+        }
+    } catch (_) {}
+
+    const processed = processData(recs);
+    try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify({
+            data:processed, lastModified, rowCount:recs.length,
+            cachedAt:new Date().toISOString()
+        }));
+    } catch (e) {
+        console.warn('localStorage write failed:', e.message);
+    }
+
+    renderDashboard(processed, lastModified);
+}
+
+boot();
+{% endraw %}
+</script>
+</body>
+</html>
