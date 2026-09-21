@@ -1,18 +1,75 @@
 ---
-layout: page
+layout: null
 title: Blog
+permalink: /blog/
 ---
-<h1>Blog</h1>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blog — Kambiz Kamrani</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Arial,sans-serif;
+  background:#fff; color:#000; padding:48px 24px; line-height:1.6;
+}
+a { color:#000; text-underline-offset:2px; }
+a:hover { opacity:.6; }
+.container { max-width:960px; margin:0 auto; }
+
+/* ── Header ── */
+.header { border-bottom:2px solid #000; padding-bottom:28px; margin-bottom:44px; }
+.header h1 { font-size:2.4em; font-weight:700; letter-spacing:-.5px; margin-bottom:6px; }
+.header-meta { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; }
+.nav-link { font-size:.78em; color:#999; }
+.nav-link a { color:#999; }
+
+/* ── Post list ── */
+.posts { list-style:none; margin-bottom:16px; }
+.posts li { padding:11px 0; border-bottom:1px solid #eee; font-size:.95em; }
+.posts li:last-child { border-bottom:0; }
+.posts .date { color:#888; font-size:.85em; margin-right:10px; font-variant-numeric:tabular-nums; }
+.empty { color:#666; font-size:.95em; }
+
+/* ── Footer ── */
+.footer { text-align:center; margin-top:56px; padding-top:24px; border-top:1px solid #ccc; color:#999; font-size:.82em; }
+
+/* ── Responsive ── */
+@media(max-width:700px){
+  body { padding:24px 14px; }
+  .header h1 { font-size:1.65em; }
+  .header-meta { flex-direction:column; align-items:flex-start; gap:4px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="header">
+  <h1>Blog</h1>
+  <div class="header-meta">
+    <span class="nav-link"><a href="/">Home</a> &middot; <a href="/cv/">CV</a> &middot; <a href="/exercise/">Exercise</a> &middot; <a href="/music/">Music</a></span>
+  </div>
+</div>
 
 {% if site.posts.size > 0 %}
 <ul class="posts">
   {% for post in site.posts %}
   <li>
-    <span>{{ post.date | date: "%B %-d, %Y" }}</span> &raquo;
+    <span class="date">{{ post.date | date: "%B %-d, %Y" }}</span>
     <a href="{{ post.url }}">{{ post.title }}</a>
   </li>
   {% endfor %}
 </ul>
 {% else %}
-<p>No posts yet.</p>
+<p class="empty">No posts yet.</p>
 {% endif %}
+
+<div class="footer">Kambiz Kamrani &middot; kambiz.github.io</div>
+
+</div><!-- /container -->
+</body>
+</html>
