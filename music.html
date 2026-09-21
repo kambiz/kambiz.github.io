@@ -8,51 +8,92 @@ permalink: /music/
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+(function(){
+  try {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+})();
+</script>
 <title>Listening History</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 
+:root {
+  --bg:#fff; --bg-alt:#f5f5f5; --bg-soft:#f9f9f9; --bg-soft2:#f7f7f7; --bg-soft3:#fafafa;
+  --fg:#000; --muted:#666; --faint:#999; --faint2:#888; --faint3:#bbb;
+  --border-strong:#000; --border:#ccc; --border-soft:#ddd; --border-softer:#eee; --border-softer2:#f0f0f0;
+  --accent:#c0392b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:#0d0d0d; --bg-alt:#1a1a1a; --bg-soft:#161616; --bg-soft2:#1c1c1c; --bg-soft3:#181818;
+    --fg:#f0f0f0; --muted:#aaa; --faint:#888; --faint2:#999; --faint3:#666;
+    --border-strong:#f0f0f0; --border:#444; --border-soft:#333; --border-softer:#2a2a2a; --border-softer2:#242424;
+    --accent:#e0574a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg:#0d0d0d; --bg-alt:#1a1a1a; --bg-soft:#161616; --bg-soft2:#1c1c1c; --bg-soft3:#181818;
+  --fg:#f0f0f0; --muted:#aaa; --faint:#888; --faint2:#999; --faint3:#666;
+  --border-strong:#f0f0f0; --border:#444; --border-soft:#333; --border-softer:#2a2a2a; --border-softer2:#242424;
+  --accent:#e0574a;
+}
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
-    background:#fff;
-    color:#000;
+    background:var(--bg);
+    color:var(--fg);
     padding:48px 24px;
     line-height:1.6;
 }
 .container { max-width:1200px; margin:0 auto; }
 
+/* ── Theme toggle ── */
+.theme-toggle {
+  position:fixed; top:20px; right:20px; z-index:100;
+  width:36px; height:36px; border-radius:50%;
+  border:1px solid var(--border); background:var(--bg); color:var(--fg);
+  font-size:16px; line-height:1; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+}
+.theme-toggle:hover { background:var(--bg-alt); }
+
 /* ── Header ── */
-.header { border-bottom:2px solid #000; padding-bottom:28px; margin-bottom:44px; }
+.header { border-bottom:2px solid var(--border-strong); padding-bottom:28px; margin-bottom:44px; }
 .header h1 { font-size:2.4em; font-weight:700; letter-spacing:-.5px; margin-bottom:6px; }
 .header-meta { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; }
-.header .subtitle { font-size:.95em; color:#666; }
-.last-updated { font-size:.78em; color:#999; font-style:italic; }
-.nav-link { font-size:.78em; color:#999; }
-.nav-link a { color:#999; text-decoration:none; }
-.nav-link a:hover { color:#000; text-decoration:underline; }
+.header .subtitle { font-size:.95em; color:var(--muted); }
+.last-updated { font-size:.78em; color:var(--faint); font-style:italic; }
+.nav-link { font-size:.78em; color:var(--faint); }
+.nav-link a { color:var(--faint); text-decoration:none; }
+.nav-link a:hover { color:var(--fg); text-decoration:underline; }
+.nav-link .current { color:var(--muted); font-weight:600; }
 
 /* ── Stat cards ── */
 .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:48px; }
-.stat-card { border:2px solid #000; padding:22px 14px; text-align:center; transition:background .15s; }
-.stat-card:hover { background:#f5f5f5; }
+.stat-card { border:2px solid var(--border-strong); padding:22px 14px; text-align:center; transition:background .15s; }
+.stat-card:hover { background:var(--bg-alt); }
 .stat-card .value { font-size:2em; font-weight:700; margin-bottom:5px; font-variant-numeric:tabular-nums; line-height:1.1; }
-.stat-card .label { font-size:.75em; text-transform:uppercase; letter-spacing:1.1px; color:#666; }
-.stat-card .sub { font-size:.68em; color:#999; margin-top:3px; }
-.stat-card.accent { border-color:#c0392b; }
-.stat-card.accent .value { color:#c0392b; }
+.stat-card .label { font-size:.75em; text-transform:uppercase; letter-spacing:1.1px; color:var(--muted); }
+.stat-card .sub { font-size:.68em; color:var(--faint); margin-top:3px; }
+.stat-card.accent { border-color:var(--accent); }
+.stat-card.accent .value { color:var(--accent); }
 
 /* ── Section dividers ── */
-.section-head { margin:56px 0 24px; padding-bottom:10px; border-bottom:2px solid #000; }
+.section-head { margin:56px 0 24px; padding-bottom:10px; border-bottom:2px solid var(--border-strong); }
 .section-head:first-of-type { margin-top:0; }
 .section-head h2 { font-size:1.35em; font-weight:700; letter-spacing:-.3px; }
-.section-head p { font-size:.85em; color:#666; margin-top:3px; }
+.section-head p { font-size:.85em; color:var(--muted); margin-top:3px; }
 
 /* ── Chart containers ── */
-.chart-container { border:1px solid #ccc; padding:24px; margin-bottom:28px; background:#fff; }
+.chart-container { border:1px solid var(--border); padding:24px; margin-bottom:28px; background:var(--bg); }
 .chart-container h2 { font-size:1.15em; font-weight:600; margin-bottom:5px; letter-spacing:-.2px; }
-.chart-container .description { color:#666; font-size:.82em; margin-bottom:16px; }
-.chart-container.feature { border:2px solid #000; }
+.chart-container .description { color:var(--muted); font-size:.82em; margin-bottom:16px; }
+.chart-container.feature { border:2px solid var(--border-strong); }
 .two-col { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
 .three-col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:24px; }
 /* Grid children default to min-width:auto, which sizes them to their content and
@@ -65,10 +106,10 @@ canvas { max-height:400px; max-width:100%; }
 
 /* ── Insight box ── */
 .insight-box {
-    border-left:3px solid #000;
+    border-left:3px solid var(--border-strong);
     padding:16px 20px;
     margin:0 0 40px;
-    background:#f9f9f9;
+    background:var(--bg-soft);
     font-size:.9em;
     line-height:1.75;
 }
@@ -77,18 +118,18 @@ canvas { max-height:400px; max-width:100%; }
 /* ── Method note ── */
 .method-note {
     margin-top:14px; padding:10px 14px;
-    background:#f7f7f7; border-left:2px solid #999;
-    font-size:.76em; color:#555; line-height:1.6;
+    background:var(--bg-soft2); border-left:2px solid var(--faint);
+    font-size:.76em; color:var(--muted); line-height:1.6;
 }
-.method-note b { color:#000; }
+.method-note b { color:var(--fg); }
 
 /* ── Takeaway strip ── */
-.takeaway { display:flex; flex-wrap:wrap; gap:0; margin-top:18px; border-top:1px solid #ddd; padding-top:14px; }
-.takeaway div { flex:1 1 130px; padding:0 14px; border-left:1px solid #eee; }
+.takeaway { display:flex; flex-wrap:wrap; gap:0; margin-top:18px; border-top:1px solid var(--border-soft); padding-top:14px; }
+.takeaway div { flex:1 1 130px; padding:0 14px; border-left:1px solid var(--border-softer); }
 .takeaway div:first-child { border-left:0; padding-left:0; }
-.takeaway .k { font-size:.68em; text-transform:uppercase; letter-spacing:1px; color:#888; }
+.takeaway .k { font-size:.68em; text-transform:uppercase; letter-spacing:1px; color:var(--faint2); }
 .takeaway .v { font-size:1.25em; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.3; }
-.takeaway .v.up { color:#c0392b; }
+.takeaway .v.up { color:var(--accent); }
 
 /* ── Clock / hour-by-year heatmap ── */
 .hm { overflow-x:auto; max-width:100%; padding-bottom:6px; }
@@ -98,7 +139,7 @@ canvas { max-height:400px; max-width:100%; }
 .hm table { border-collapse:collapse; font-size:.72em; width:100%; table-layout:fixed; min-width:560px; }
 .hm th.rowhead { width:46px; }
 .hm td, .hm th { padding:0; }
-.hm th { font-weight:600; color:#888; font-size:.92em; padding:0 5px 5px; white-space:nowrap; }
+.hm th { font-weight:600; color:var(--faint2); font-size:.92em; padding:0 5px 5px; white-space:nowrap; }
 .hm th.rowhead { text-align:right; padding-right:8px; font-variant-numeric:tabular-nums; }
 .hm .c { width:auto; height:22px; border-radius:2px; }
 .hm .c[data-v] { outline:0; }
@@ -107,10 +148,10 @@ canvas { max-height:400px; max-width:100%; }
 .cal-year { margin-bottom:18px; }
 .cal-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; }
 .cal-head .y { font-weight:700; font-size:.95em; }
-.cal-head .s { font-size:.78em; color:#666; }
+.cal-head .s { font-size:.78em; color:var(--muted); }
 .cal-grid { display:grid; grid-auto-flow:column; grid-template-rows:repeat(7,1fr); gap:2px; overflow-x:auto; padding-bottom:4px; }
-.cal-cell { width:11px; height:11px; border-radius:2px; background:#f0f0f0; }
-.cal-legend { display:flex; align-items:center; gap:4px; flex-wrap:wrap; font-size:.72em; color:#888; margin-top:10px; }
+.cal-cell { width:11px; height:11px; border-radius:2px; background:var(--border-softer2); }
+.cal-legend { display:flex; align-items:center; gap:4px; flex-wrap:wrap; font-size:.72em; color:var(--faint2); margin-top:10px; }
 .cal-legend .gap { margin-left:14px; }
 .cal-legend i { width:11px; height:11px; border-radius:2px; display:inline-block; }
 @media(max-width:600px){ .cal-cell, .cal-legend i { width:8px; height:8px; } }
@@ -120,40 +161,44 @@ canvas { max-height:400px; max-width:100%; }
 .rank { width:100%; border-collapse:collapse; font-size:.85em; }
 .rank th {
     text-align:left; font-size:.68em; text-transform:uppercase; letter-spacing:1px;
-    color:#888; font-weight:600; padding:0 8px 8px 0; border-bottom:1px solid #ddd;
+    color:var(--faint2); font-weight:600; padding:0 8px 8px 0; border-bottom:1px solid var(--border-soft);
 }
-.rank td { padding:7px 8px 7px 0; border-bottom:1px solid #f0f0f0; vertical-align:middle; }
-.rank td.n { color:#bbb; font-variant-numeric:tabular-nums; width:26px; font-size:.9em; }
+.rank td { padding:7px 8px 7px 0; border-bottom:1px solid var(--border-softer2); vertical-align:middle; }
+.rank td.n { color:var(--faint3); font-variant-numeric:tabular-nums; width:26px; font-size:.9em; }
 .rank td.v { text-align:right; font-variant-numeric:tabular-nums; font-weight:600; white-space:nowrap; }
-.rank td.meta { text-align:right; color:#999; font-size:.85em; white-space:nowrap; font-variant-numeric:tabular-nums; }
-.rank .bar { display:block; height:3px; background:#000; margin-top:4px; }
-.rank .sub { color:#999; font-size:.85em; }
-.rank tr:hover td { background:#fafafa; }
+.rank td.meta { text-align:right; color:var(--faint); font-size:.85em; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.rank .bar { display:block; height:3px; background:var(--fg); margin-top:4px; }
+.rank .sub { color:var(--faint); font-size:.85em; }
+.rank tr:hover td { background:var(--bg-soft3); }
 
 /* ── Era ribbon ── */
-.ribbon { display:flex; flex-wrap:wrap; gap:0; border:1px solid #ddd; border-left:0; margin-top:4px; }
-.ribbon div { flex:1 1 92px; border-left:1px solid #ddd; padding:11px 12px; }
-.ribbon .y { font-size:.72em; letter-spacing:1px; color:#888; text-transform:uppercase; }
+.ribbon { display:flex; flex-wrap:wrap; gap:0; border:1px solid var(--border-soft); border-left:0; margin-top:4px; }
+.ribbon div { flex:1 1 92px; border-left:1px solid var(--border-soft); padding:11px 12px; }
+.ribbon .y { font-size:.72em; letter-spacing:1px; color:var(--faint2); text-transform:uppercase; }
 .ribbon .a { font-size:.88em; font-weight:700; line-height:1.35; margin-top:2px; }
-.ribbon .p { font-size:.74em; color:#999; font-variant-numeric:tabular-nums; }
+.ribbon .p { font-size:.74em; color:var(--faint); font-variant-numeric:tabular-nums; }
 
 /* ── State screens ── */
 .state-screen { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:60vh; text-align:center; gap:18px; }
 .state-screen .icon { font-size:3em; }
 .state-screen h2 { font-size:1.4em; font-weight:600; }
-.state-screen p { color:#666; font-size:.95em; max-width:480px; line-height:1.6; }
+.state-screen p { color:var(--muted); font-size:.95em; max-width:480px; line-height:1.6; }
 .state-screen code {
-    background:#f3f3f3; border:1px solid #ddd;
-    padding:12px 20px; font-family:monospace; font-size:.9em; color:#333;
+    background:var(--bg-soft); border:1px solid var(--border-soft);
+    padding:12px 20px; font-family:monospace; font-size:.9em; color:var(--fg);
     display:block; margin-top:4px;
 }
-.error-detail { color:#c0392b; font-size:.85em; font-family:monospace; }
-.spinner { width:40px; height:40px; border:3px solid #eee; border-top-color:#000; border-radius:50%; animation:spin .8s linear infinite; }
+.error-detail { color:var(--accent); font-size:.85em; font-family:monospace; }
+.spinner { width:40px; height:40px; border:3px solid var(--border-softer); border-top-color:var(--fg); border-radius:50%; animation:spin .8s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
 
 /* ── Footer ── */
-.footer { text-align:center; margin-top:48px; padding-top:24px; border-top:1px solid #ccc; color:#999; font-size:.82em; }
-.footer a { color:#999; }
+.footer { text-align:center; margin-top:48px; padding-top:24px; border-top:1px solid var(--border); color:var(--faint); font-size:.82em; }
+.footer a { color:var(--muted); }
+.footer .social-row {
+    display:flex; justify-content:center; flex-wrap:wrap;
+    gap:8px 20px; margin-bottom:12px; font-size:1.05em;
+}
 
 /* ── Tablet ── */
 @media(max-width:900px){
@@ -179,10 +224,30 @@ canvas { max-height:400px; max-width:100%; }
     .takeaway div { flex:1 1 50%; border-left:0; padding:6px 0; }
     .section-head h2 { font-size:1.15em; }
     .ribbon div { flex:1 1 50%; }
+    .theme-toggle { top:12px; right:12px; width:32px; height:32px; }
 }
 </style>
 </head>
 <body>
+<button id="theme-toggle" class="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">🌙</button>
+<script>
+(function () {
+  // Deliberately independent of the Chart.js-dependent script below: the
+  // toggle itself must keep working even if that CDN script fails to load.
+  var btn = document.getElementById('theme-toggle');
+  function render() {
+    btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
+  }
+  btn.addEventListener('click', function () {
+    var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('theme', next); } catch (e) {}
+    render();
+    document.dispatchEvent(new CustomEvent('themechange'));
+  });
+  render();
+})();
+</script>
 <div class="container" id="app"></div>
 
 <script>
@@ -258,7 +323,11 @@ const ERA_ARTISTS   = 8;   // lines on the taste-migration chart
 // ─────────────────────────────────────────────────────────────
 //  PALETTE
 // ─────────────────────────────────────────────────────────────
-const C = { black:'#000', dark:'#333', mid:'#666', light:'#999', vlight:'#ccc', red:'#c0392b' };
+const PALETTE = {
+    light: { black:'#000', dark:'#333', mid:'#666', light:'#999', vlight:'#ccc', red:'#c0392b', gridLine:'#eee' },
+    dark:  { black:'#f0f0f0', dark:'#ccc', mid:'#aaa', light:'#888', vlight:'#444', red:'#e0574a', gridLine:'#2a2a2a' }
+};
+const C = { ...PALETTE.light };
 // Ordered so adjacent series stay separable in greyscale as well as colour.
 const SERIES = ['#000000','#c0392b','#2c6e8f','#7a7a7a','#8e6d3f','#4a7c59','#8e5572','#b5893c'];
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -266,6 +335,36 @@ const DAYS   = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 // Calendar ramp, in scrobbles logged that day.
 const CAL_STEPS  = [0, 10, 30, 60, 120];
 const CAL_COLORS = ['#f0f0f0','#d8d8d8','#a8a8a8','#6e6e6e','#333333','#000000'];
+// Dark-mode ramp inverts lightness: an empty day sits near the dark
+// background instead of being the brightest cell on the page.
+const CAL_COLORS_DARK = ['#242424','#454545','#6b6b6b','#969696','#c8c8c8','#f5f5f5'];
+
+// ─────────────────────────────────────────────────────────────
+//  THEME (light/dark) — mutates C for anything built after a toggle,
+//  and retroactively recolors already-built charts via the registry.
+// ─────────────────────────────────────────────────────────────
+const chartRegistry = [];
+Chart.register({
+    id: 'themeTracker',
+    afterInit(chart) { chartRegistry.push(chart); }
+});
+function applyChartTheme() {
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+    Object.assign(C, dark ? PALETTE.dark : PALETTE.light);
+    Chart.defaults.color       = C.mid;
+    GRID.color = C.gridLine;
+    chartRegistry.forEach(chart => {
+        ['x', 'y', 'r'].forEach(k => {
+            const sc = chart.options.scales && chart.options.scales[k];
+            if (!sc) return;
+            if (sc.ticks) sc.ticks.color = C.mid;
+            if (sc.grid && sc.grid.color !== undefined) sc.grid.color = C.gridLine;
+            if (sc.angleLines && sc.angleLines.color !== undefined) sc.angleLines.color = C.gridLine;
+            if (sc.pointLabels) sc.pointLabels.color = C.light;
+        });
+        chart.update('none');
+    });
+}
 
 // ─────────────────────────────────────────────────────────────
 //  GENRE
@@ -539,10 +638,11 @@ function zProp(x1, n1, x2, n2) {
     return se ? (x2/n2 - x1/n1)/se : 0;
 }
 function calColor(v) {
-    if (!v) return CAL_COLORS[0];
+    const ramp = document.documentElement.getAttribute('data-theme') === 'dark' ? CAL_COLORS_DARK : CAL_COLORS;
+    if (!v) return ramp[0];
     let i = 1;
     for (let s = 1; s < CAL_STEPS.length; s++) if (v > CAL_STEPS[s]) i = s+1;
-    return CAL_COLORS[Math.min(i, CAL_COLORS.length-1)];
+    return ramp[Math.min(i, ramp.length-1)];
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -914,7 +1014,10 @@ const fmtMon  = ts => new Date(ts).toLocaleDateString('en-US', { month:'short', 
 const hourLabel = h => h === 0 ? '12a' : h < 12 ? h+'a' : h === 12 ? '12p' : (h-12)+'p';
 const hourFull  = h => `${String(h).padStart(2,'0')}:00`;
 
+let lastRenderedData = null; // captured for the theme toggle to redraw calendar/heatmap
+
 function renderDashboard(D, lastModified) {
+    lastRenderedData = D;
     const T = D.totals, K = D.clock;
 
     const cards = [
@@ -937,7 +1040,8 @@ function renderDashboard(D, lastModified) {
                 ${fmtMon(T.first)} to ${fmtMon(T.last)}</span>
             <span class="nav-link">
                 <a href="/">Home</a> &middot; <a href="/cv/">CV</a> &middot;
-                <a href="/blog/">Blog</a> &middot; <a href="/exercise/">Exercise</a>
+                <a href="/blog/">Blog</a> &middot; <a href="/exercise/">Exercise</a> &middot;
+                <span class="current">Music</span>
             </span>
         </div>
         <div class="last-updated">Data last updated ${lastModified ? fmtDate(Date.parse(lastModified)) : '—'}</div>
@@ -1220,8 +1324,15 @@ function renderDashboard(D, lastModified) {
     </div>
 
     <div class="footer">
-        Built from a Last.fm API export &middot; parsed and charted in the browser &middot;
-        <a href="https://www.last.fm/user/kambizkamrani">last.fm/user/kambizkamrani</a>
+        <div style="margin-bottom:10px;">Built from a Last.fm API export &middot; parsed and charted in the browser</div>
+        <div class="social-row">
+            <a href="https://github.com/kambiz">GitHub</a>
+            <a href="https://www.twitter.com/kambiz">Twitter</a>
+            <a href="https://www.linkedin.com/in/kambiz">LinkedIn</a>
+            <a href="https://www.last.fm/user/kambizkamrani">Last.fm</a>
+            <a href="https://www.strava.com/athletes/kambizkamrani">Strava</a>
+        </div>
+        <div>Kambiz Kamrani &middot; kambiz.github.io</div>
     </div>
     `;
 
@@ -1239,18 +1350,23 @@ function renderDashboard(D, lastModified) {
     drawSessions(D);
     drawSeason(D);
     drawTables(D);
+
+    // Corrects any grid/angle-line drawn with a literal (non-theme-aware)
+    // color above, in case the page loaded straight into dark mode.
+    applyChartTheme();
 }
 
 // ─────────────────────────────────────────────────────────────
 //  CHART DEFAULTS
 // ─────────────────────────────────────────────────────────────
 Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif";
-Chart.defaults.color = C.mid;
 Chart.defaults.font.size = 11;
 
 const GRID  = { color:'#eee', drawTicks:false };
 const LEGEND_TOP = { position:'top', align:'start',
     labels:{ boxWidth:10, boxHeight:10, usePointStyle:true, pointStyle:'rect', padding:14 } };
+
+applyChartTheme();
 
 // ─────────────────────────────────────────────────────────────
 //  1. THE CLOCK
@@ -1287,8 +1403,8 @@ function drawClock(D) {
             scales:{
                 r:{
                     beginAtZero:true,
-                    angleLines:{ color:'#eee' },
-                    grid:{ color:'#e8e8e8' },
+                    angleLines:{ color:C.gridLine },
+                    grid:{ color:C.gridLine },
                     pointLabels:{ font:{ size:10 }, color:C.light },
                     ticks:{ display:false }
                 }
@@ -1365,13 +1481,17 @@ function drawHourYear(D) {
     let html = '<table><tr><th class="rowhead"></th>';
     for (let h = 0; h < 24; h++) html += `<th>${h % 2 === 0 ? hourLabel(h) : ''}</th>`;
     html += '</tr>';
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark';
     for (const r of rows) {
         const mx = Math.max(...r.pct);
         html += `<tr><th class="rowhead">${r.year}</th>`;
         for (let h = 0; h < 24; h++) {
             const f = mx ? r.pct[h]/mx : 0;
-            // Single-hue ramp: white to black, gamma-shaped so the low end stays legible.
-            const l = Math.round(255 - 235*Math.pow(f, .72));
+            // Single-hue ramp, gamma-shaped so the low end stays legible. Light mode
+            // runs white to black; dark mode inverts it so an idle hour sits near the
+            // page background instead of being the brightest cell on the page.
+            const l = dark ? Math.round(24 + 215*Math.pow(f, .72))
+                           : Math.round(255 - 235*Math.pow(f, .72));
             html += `<td><div class="c" style="background:rgb(${l},${l},${l})" `
                  +  `title="${r.year} ${hourFull(h)} — ${r.pct[h].toFixed(2)}% of the year"></div></td>`;
         }
@@ -2049,6 +2169,19 @@ async function boot() {
 }
 
 boot();
+
+// The toggle button's own click handling lives in the independent script
+// right after it in <body>, so it keeps working even if this Chart.js-
+// dependent script never runs. This just recolors charts and repaints the
+// calendar and hour-year heatmap, which paint colors straight into
+// innerHTML rather than through Chart.js.
+document.addEventListener('themechange', function () {
+    applyChartTheme();
+    if (lastRenderedData) {
+        drawCalendar(lastRenderedData);
+        drawHourYear(lastRenderedData);
+    }
+});
 {% endraw %}
 </script>
 </body>
