@@ -49,6 +49,23 @@ body {
 .section-head h2 { font-size:1.35em; font-weight:700; letter-spacing:-.3px; }
 .section-head p { font-size:.85em; color:#666; margin-top:3px; }
 
+/* ── Discipline tabs ── */
+.tabs { display:flex; flex-wrap:wrap; gap:0; margin:0 0 24px; border-bottom:2px solid #000; }
+.tabs button {
+    font:inherit; font-size:.9em; font-weight:600; letter-spacing:.2px;
+    background:none; border:0; border-bottom:3px solid transparent;
+    padding:10px 18px; margin-bottom:-2px; cursor:pointer; color:#888;
+    transition:color .15s, border-color .15s;
+}
+.tabs button:hover { color:#000; }
+.tabs button[aria-selected="true"] { color:#000; border-bottom-color:#c0392b; }
+.tabs button .n { font-weight:400; color:#aaa; font-size:.85em; margin-left:6px; }
+.tabs button[aria-selected="true"] .n { color:#c0392b; }
+.tab-panel[hidden] { display:none; }
+/* The active tab already names the discipline, so the panel only needs its
+   numbers — not a second heading repeating the label. */
+.panel-meta { font-size:.85em; color:#666; margin:-6px 0 22px; }
+
 /* ── Chart containers ── */
 .chart-container { border:1px solid #ccc; padding:24px; margin-bottom:28px; background:#fff; }
 .chart-container h2 { font-size:1.15em; font-weight:600; margin-bottom:5px; letter-spacing:-.2px; }
@@ -58,15 +75,6 @@ body {
 .three-col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:24px; }
 
 canvas { max-height:400px; max-width:100%; }
-
-/* ── Pie grid ── */
-/* --pie-cols is set inline from the number of qualifying years, so the grid never
-   leaves a dead cell. The tablet/mobile overrides below still win, since they set
-   grid-template-columns directly rather than the variable. */
-.pie-grid { display:grid; grid-template-columns:repeat(var(--pie-cols,4),1fr); gap:16px; align-items:start; }
-.pie-item { text-align:center; }
-.pie-item h3 { font-size:.95em; font-weight:600; margin-bottom:10px; color:#333; }
-.pie-item canvas { max-height:180px; max-width:100%; }
 
 /* ── Insight box ── */
 .insight-box {
@@ -126,7 +134,6 @@ canvas { max-height:400px; max-width:100%; }
 /* ── Tablet ── */
 @media(max-width:900px){
     .stats-grid { grid-template-columns:repeat(3,1fr); }
-    .pie-grid { grid-template-columns:repeat(2,1fr); gap:20px; }
     .three-col { grid-template-columns:1fr 1fr; }
 }
 
@@ -142,11 +149,12 @@ canvas { max-height:400px; max-width:100%; }
     .two-col { grid-template-columns:1fr; gap:0; }
     .two-col .chart-container { margin-bottom:28px; }
     .three-col { grid-template-columns:1fr; }
-    .pie-grid { grid-template-columns:repeat(2,1fr); gap:16px; }
     .chart-container { padding:18px 14px; }
     canvas { max-height:300px; }
     .takeaway div { flex:1 1 50%; border-left:0; padding:6px 0; }
     .section-head h2 { font-size:1.15em; }
+    .tabs { flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    .tabs button { padding:9px 13px; font-size:.82em; white-space:nowrap; }
 }
 </style>
 </head>
@@ -160,7 +168,7 @@ canvas { max-height:400px; max-width:100%; }
 // Absolute path: the page is served from /exercise/ (see the permalink in this
 // file's front matter), so a relative name would resolve to /exercise/<file>.
 const CSV_FILENAME  = '/kambizkamrani_workouts.csv';
-const CACHE_KEY     = 'peloton_cache_v12'; // v12: power-zone evolution from estimated FTP
+const CACHE_KEY     = 'peloton_cache_v13'; // v13: tabbed disciplines, redundant charts removed
 const REQUIRED_COLS = [
     'Workout Timestamp','Fitness Discipline','Length (minutes)',
     'Calories Burned','Avg. Watts','Avg. Heartrate','Instructor Name'
@@ -561,7 +569,6 @@ function processData(rows) {
         .filter(r => r.ts !== null);
 
     const ym  = ts => `${ts.getFullYear()}-${String(ts.getMonth()+1).padStart(2,'0')}`;
-    const DOW = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
     valid.forEach(r => {
         r._ym  = ym(r.ts);
@@ -569,18 +576,6 @@ function processData(rows) {
         r._q   = `${r.ts.getFullYear()} Q${Math.floor(r.ts.getMonth()/3)+1}`;
         // Half-years keep the duration-split buckets large enough to be stable
         r._hy  = `${r.ts.getFullYear()} H${r.ts.getMonth() < 6 ? 1 : 2}`;
-        r._dow = DOW[r.ts.getDay()];
-    });
-
-    // Years present in the data — derived, never hardcoded, so the dashboard
-    // keeps working as new years roll in.
-    const allYears = [...new Set(valid.map(r=>r._yr))].sort((a,b)=>a-b);
-    // Years worth a pie of their own: enough sessions to be representative, and
-    // at least two disciplines — a single-slice pie is a full circle that shows
-    // no mix at all (2023 was 100% cycling, so it earned no chart).
-    const pieYears = allYears.filter(y => {
-        const yd = valid.filter(r => r._yr === y);
-        return yd.length >= 20 && new Set(yd.map(r => r['Fitness Discipline'])).size >= 2;
     });
 
     // ── Cycling subsets ────────────────────────────────────────
@@ -654,12 +649,6 @@ function processData(rows) {
             .toLocaleDateString('en-US',{month:'long',year:'numeric'})
         : null;
     const dropPartial = keys => keys.filter(k => k !== partialMonth);
-
-    // ── Timeline ───────────────────────────────────────────────
-    const tlMap = new Map();
-    valid.forEach(r=>tlMap.set(r._ym,(tlMap.get(r._ym)||0)+1));
-    const tlKeys = dropPartial([...tlMap.keys()].sort());
-    const timeline = { labels:tlKeys, counts:tlKeys.map(k=>tlMap.get(k)) };
 
     // ── Monthly hours by discipline ────────────────────────────
     // Shows the training mix shifting over time: how the week's hours get
@@ -941,17 +930,6 @@ function processData(rows) {
         })).filter(sv => sv.data.some(v => v > 0))
     };
 
-    // Cycling power zones — effort rides only, so warm-ups don't pile
-    // into the bottom bucket and swamp the distribution.
-    const PW_BINS   = [0,125,150,175,200,225,250,Infinity];
-    const PW_LABELS = ['< 125W','125–150W','150–175W','175–200W','200–225W','225–250W','250W+'];
-    const pwZoneCounts = Array(PW_LABELS.length).fill(0);
-    effort.forEach(r=>{
-        const w=num(r,'Avg. Watts'); if(w===null) return;
-        for(let i=0;i<PW_BINS.length-1;i++) if(w>=PW_BINS[i]&&w<PW_BINS[i+1]){ pwZoneCounts[i]++; break; }
-    });
-    const powerZones = { labels:PW_LABELS, counts:pwZoneCounts };
-
     // Cycling HR zones — cycling only, for the same reason as above.
     const HR_BINS   = [0,120,135,145,155,165,Infinity];
     const HR_LABELS = ['< 120','120–135','135–145','145–155','155–165','165+'];
@@ -969,22 +947,6 @@ function processData(rows) {
         counts: hourBins
     };
 
-    const hmMap = groupBy(valid, r=>`${r._yr}-${r.ts.getMonth()+1}`);
-    const heatmap = [];
-    for (const yr of allYears)
-        for (let m=1; m<=12; m++)
-            heatmap.push({ year:yr, month:m, count:(hmMap.get(`${yr}-${m}`)||[]).length });
-
-    const activityByYear = {};
-    for (const yr of pieYears) {
-        const yd = valid.filter(r=>r._yr===yr);
-        const m = {};
-        yd.forEach(r=>{ const d=r['Fitness Discipline']; m[d]=(m[d]||0)+(num(r,'Length (minutes)')||0); });
-        activityByYear[yr] = Object.fromEntries(
-            Object.entries(m).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k,Math.round(v)])
-        );
-    }
-
     const uniqueDates = [...new Set(valid.map(r=>r.ts.toDateString()))].map(s=>new Date(s)).sort((a,b)=>a-b);
     let longestStreak=1, curStreak=1;
     for(let i=1;i<uniqueDates.length;i++){
@@ -992,20 +954,13 @@ function processData(rows) {
         if(diff===1){ curStreak++; longestStreak=Math.max(longestStreak,curStreak); } else curStreak=1;
     }
 
-    const yoyHours = {
-        labels: allYears.map(String),
-        hours:  allYears.map(yr=>+(valid.filter(r=>r._yr===yr)
-                    .reduce((s,r)=>s+(num(r,'Length (minutes)')||0),0)/60).toFixed(1))
-    };
-
     console.log(`✅ ${valid.length} workouts · ${effort.length} effort rides · ` +
                 `power ${progression.powerEarly}→${progression.powerNow}W · ` +
                 `HR ${progression.hrEarly}→${progression.hrNow}bpm · ` +
                 `eff ${progression.effEarly}→${progression.effNow} W/bpm · streak ${longestStreak}d`);
 
-    return { stats, longestStreak, disciplines, timeline, instructors,
-             disciplineStats, cadenceResistance, speedIncline, powerZones, hrZones,
-             timeOfDay, heatmap, activityByYear, yoyHours, allYears, pieYears,
+    return { stats, longestStreak, disciplines, instructors,
+             disciplineStats, cadenceResistance, speedIncline, hrZones, timeOfDay,
              monthlyHours, partialNote, zoneEvolution, zoneMix, POWER_ZONES };
 }
 
@@ -1020,10 +975,8 @@ function disciplineSectionHTML(ds, notes) {
     const k = ds.spec.key, S = ds.spec, sum = ds.summary;
     if (!ds.hasData) {
         return `
-        <div class="section-head">
-            <h2>${S.label}</h2>
-            <p>No sessions yet carry both a ${S.perfName.toLowerCase()} figure and a heart rate.</p>
-        </div>`;
+        <div class="panel-meta">No sessions yet carry both a
+           ${S.perfName.toLowerCase()} figure and a heart rate.</div>`;
     }
 
     const hrWord = sum.hrDelta === 0 ? 'at an unchanged average heart rate'
@@ -1031,12 +984,9 @@ function disciplineSectionHTML(ds, notes) {
                  : `while average heart rate rose ${sum.hrDelta} bpm`;
 
     let html = `
-        <div class="section-head">
-            <h2>${S.label}</h2>
-            <p>${ds.sessions.length} effort sessions of ${S.minMinutes}+ minutes
-               (${ds.totalSessions} logged in total, warm-ups and cool-downs excluded)
-               &nbsp;|&nbsp; ${Math.round(ds.totalMinutes/60)} hours all-in</p>
-        </div>`;
+        <div class="panel-meta">${ds.sessions.length} effort sessions of ${S.minMinutes}+ minutes
+           (${ds.totalSessions} logged in total, warm-ups and cool-downs excluded)
+           &nbsp;|&nbsp; ${Math.round(ds.totalMinutes/60)} hours all-in</div>`;
 
     // Thin-data disciplines get a plain statement instead of trend lines drawn
     // through too few points to mean anything.
@@ -1357,9 +1307,8 @@ function drawDisciplineCharts(ds) {
 //  RENDER
 // ─────────────────────────────────────────────────────────────
 function renderDashboard(data, lastModified) {
-    const { stats, longestStreak, disciplines, timeline, instructors,
-            disciplineStats, cadenceResistance, speedIncline, powerZones, hrZones,
-            timeOfDay, heatmap, activityByYear, yoyHours, allYears, pieYears,
+    const { stats, longestStreak, disciplines, instructors,
+            disciplineStats, cadenceResistance, speedIncline, hrZones, timeOfDay,
             monthlyHours, partialNote, zoneEvolution, zoneMix, POWER_ZONES } = data;
 
     // The cycling section predates the generic analyzer and reads these names
@@ -1421,13 +1370,23 @@ function renderDashboard(data, lastModified) {
                 .map(sp => `${sp.label} has too few sessions so far to trend.`).join(' ')}
         </div>
 
-        <!-- ═══════════ FITNESS PROGRESSION ═══════════ -->
+        <!-- ═══════════ BY DISCIPLINE (tabbed) ═══════════ -->
         <div class="section-head">
-            <h2>Cycling</h2>
-            <p>${cycling.sessions.length} effort rides of ${cycling.spec.minMinutes}+ minutes
-               (${cycling.totalSessions} logged in total, warm-ups and cool-downs excluded)
-               &nbsp;|&nbsp; ${Math.round(cycling.totalMinutes/60)} hours all-in</p>
+            <h2>By Discipline</h2>
+            <p>Each sport measured on its own terms — watts on the bike, speed on foot, pace on the rower —
+               all sharing one efficiency metric: output per heartbeat.</p>
         </div>
+
+        <div class="tabs" role="tablist" id="discTabs">
+            ${DISCIPLINE_SPECS.filter(sp => disciplineStats[sp.key].hasData).map((sp,i) => `
+                <button role="tab" data-tab="${sp.key}" aria-selected="${i===0}"
+                        aria-controls="panel-${sp.key}">${sp.label}<span class="n">${disciplineStats[sp.key].sessions.length}</span></button>`).join('')}
+        </div>
+
+        <div class="tab-panel" id="panel-cycling" role="tabpanel">
+        <div class="panel-meta">${cycling.sessions.length} effort rides of ${cycling.spec.minMinutes}+ minutes
+           (${cycling.totalSessions} logged in total, warm-ups and cool-downs excluded)
+           &nbsp;|&nbsp; ${Math.round(cycling.totalMinutes/60)} hours all-in</div>
 
         <div class="chart-container feature">
             <h2>Power Output &amp; Heart Rate Over Time (Cycling)</h2>
@@ -1561,20 +1520,16 @@ function renderDashboard(data, lastModified) {
             </div>
         </div>
 
-        <div class="two-col">
-            <div class="chart-container">
-                <h2>Cycling Power Zone Distribution</h2>
-                <div class="description">Effort rides by average watt bucket</div>
-                <canvas id="powerZoneChart"></canvas>
-            </div>
-            <div class="chart-container">
-                <h2>Cycling Heart Rate Zone Distribution</h2>
-                <div class="description">Effort rides by average heart rate — cycling only</div>
-                <canvas id="hrZoneChart"></canvas>
-            </div>
+        <div class="chart-container">
+            <h2>Cycling Heart Rate Zone Distribution</h2>
+            <div class="description">Effort rides by average heart rate — cycling only</div>
+            <canvas id="hrZoneChart"></canvas>
         </div>
 
+        </div><!-- /panel-cycling -->
+
         <!-- ═══════════ WALKING & HIKING ═══════════ -->
+        <div class="tab-panel" id="panel-walking" role="tabpanel" hidden>
         ${disciplineSectionHTML(disciplineStats.walking, {
             trend: `Heart rate here is <b>walking sessions only</b>, on the same principle as the cycling
                     section. Note the confound this discipline cannot escape: Peloton exports incline for
@@ -1592,7 +1547,10 @@ function renderDashboard(data, lastModified) {
                      walking charts is held fixed here.`
         })}
 
+        </div><!-- /panel-walking -->
+
         <!-- ═══════════ RUNNING ═══════════ -->
+        <div class="tab-panel" id="panel-running" role="tabpanel" hidden>
         ${disciplineSectionHTML(disciplineStats.running, {
             trend: `Heart rate is running sessions only. Running is the newest of these disciplines, so the
                     series is short and each month rests on relatively few sessions — treat the shape as
@@ -1615,13 +1573,18 @@ function renderDashboard(data, lastModified) {
             </div>
         </div>` : ''}
 
+        </div><!-- /panel-running -->
+
         <!-- ═══════════ ROWING ═══════════ -->
+        <div class="tab-panel" id="panel-rowing" role="tabpanel" hidden>
         ${disciplineSectionHTML(disciplineStats.rowing, {
             scatter:`Rowing pace is shown in metres per minute so that up still means better, matching every
                      other section; hover any point for the 500 m split. Peloton writes <b>metres and
                      metres per second</b> into the columns labelled "Distance (mi)" and "Avg. Speed (mph)"
                      for the rower — and only for the rower — so these figures are converted accordingly.`
         })}
+
+        </div><!-- /panel-rowing -->
 
         <!-- ═══════════ TRAINING VOLUME & HABITS ═══════════ -->
         <div class="section-head">
@@ -1650,35 +1613,9 @@ function renderDashboard(data, lastModified) {
         </div>
 
         <div class="chart-container">
-            <h2>Activity Mix by Year</h2>
-            <div class="description">Sized by hours spent — greyscale at rest, hover to reveal colour${
-                allYears.length > pieYears.length
-                    ? ` &nbsp;|&nbsp; ${allYears.filter(y=>!pieYears.includes(y)).join(', ')} omitted: too few sessions, or a single discipline`
-                    : ''}</div>
-            <div class="pie-grid" id="pieGrid"></div>
-        </div>
-
-        <div class="chart-container">
-            <h2>Workout Frequency Over Time</h2>
-            <canvas id="timelineChart"></canvas>
-        </div>
-
-        <div class="two-col">
-            <div class="chart-container">
-                <h2>Workout Time of Day</h2>
-                <div class="description">Total sessions by hour across all workouts</div>
-                <canvas id="timeOfDayChart"></canvas>
-            </div>
-            <div class="chart-container">
-                <h2>Training Volume by Year</h2>
-                <div class="description">Total hours invested per calendar year</div>
-                <canvas id="yoyChart"></canvas>
-            </div>
-        </div>
-
-        <div class="chart-container">
-            <h2>Monthly Workout Volume (${allYears[0]} – ${allYears[allYears.length-1]})</h2>
-            <canvas id="heatmapChart"></canvas>
+            <h2>Workout Time of Day</h2>
+            <div class="description">Total sessions by hour across all workouts</div>
+            <canvas id="timeOfDayChart"></canvas>
         </div>
 
         <div class="chart-container">
@@ -1719,533 +1656,545 @@ function renderDashboard(data, lastModified) {
         y:{ ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} }
     };
 
-    // ═══════════════════════════════════════════════════════════
-    //  FITNESS PROGRESSION CHARTS
-    // ═══════════════════════════════════════════════════════════
+    // ── Per-discipline chart builders ─────────────────────────
+    // Charts are built on first tab activation, never up front: Chart.js sizes
+    // its canvas from the container, and a canvas inside a hidden panel measures
+    // zero — charts built there come out blank and stay blank. Deferring also
+    // keeps first paint to one discipline's worth of work instead of four.
+    function drawCyclingCharts() {
+        // ═══════════════════════════════════════════════════════════
+        //  FITNESS PROGRESSION CHARTS
+        // ═══════════════════════════════════════════════════════════
 
-    // 1 · Flagship: power + cycling HR, dual axis with ±1 SD error bars
-    (()=>{
-        new Chart(document.getElementById('combinedChart'),{
-            type:'line',
-            data:{ labels:cyclingTrend.labels, datasets:[
-                {
-                    label:'Power Output (W)', data:cyclingTrend.power, yAxisID:'y',
-                    borderColor:C.black, backgroundColor:'rgba(0,0,0,0.05)',
-                    fill:true, tension:0.4, borderWidth:2,
-                    pointRadius:4, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:2
-                },
-                {
-                    label:'Cycling Heart Rate (bpm)', data:cyclingTrend.hr, yAxisID:'y1',
-                    borderColor:C.red, backgroundColor:'rgba(192,57,43,0.05)',
-                    fill:false, tension:0.4, borderWidth:2,
-                    pointRadius:4, pointBackgroundColor:C.red, pointBorderColor:'#fff', pointBorderWidth:2
-                }
-            ]},
-            options:{
-                responsive:true, interaction:{mode:'index',intersect:false},
-                plugins:{
-                    legend:{ display:true, position:'top', labels:{color:C.mid,font:{size:11}} },
-                    tooltip:{ callbacks:{
-                        title: items => `${items[0].label} · ${cyclingTrend.count[items[0].dataIndex]} effort rides`,
-                        label: ctx=>{
-                            const i=ctx.dataIndex, v=ctx.parsed.y;
-                            if(v===null) return null;
-                            return ctx.datasetIndex===0
-                                ? `Power: ${v.toFixed(1)} W ±${cyclingTrend.powerStd[i].toFixed(1)}`
-                                : `Cycling HR: ${v.toFixed(1)} bpm ±${cyclingTrend.hrStd[i].toFixed(1)}`;
-                        }
-                    }}
-                },
-                scales:{
-                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                    y:{
-                        type:'linear', position:'left', beginAtZero:true,
-                        title:{display:true,text:'Power (W)',color:C.black},
-                        ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.04)'}
+        // 1 · Flagship: power + cycling HR, dual axis with ±1 SD error bars
+        (()=>{
+            new Chart(document.getElementById('combinedChart'),{
+                type:'line',
+                data:{ labels:cyclingTrend.labels, datasets:[
+                    {
+                        label:'Power Output (W)', data:cyclingTrend.power, yAxisID:'y',
+                        borderColor:C.black, backgroundColor:'rgba(0,0,0,0.05)',
+                        fill:true, tension:0.4, borderWidth:2,
+                        pointRadius:4, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:2
                     },
-                    y1:{
-                        type:'linear', position:'right', min:100, max:180,
-                        title:{display:true,text:'Cycling Heart Rate (bpm)',color:C.red},
-                        ticks:{color:C.red,callback:v=>v+' bpm'}, grid:{drawOnChartArea:false}
+                    {
+                        label:'Cycling Heart Rate (bpm)', data:cyclingTrend.hr, yAxisID:'y1',
+                        borderColor:C.red, backgroundColor:'rgba(192,57,43,0.05)',
+                        fill:false, tension:0.4, borderWidth:2,
+                        pointRadius:4, pointBackgroundColor:C.red, pointBorderColor:'#fff', pointBorderWidth:2
                     }
-                }
-            },
-            plugins:[{ afterDatasetsDraw(chart){
-                const ctx=chart.ctx;
-                const bars=(mi,means,stds,scaleId,color)=>{
-                    const meta=chart.getDatasetMeta(mi), ys=chart.scales[scaleId];
-                    meta.data.forEach((pt,i)=>{
-                        if(means[i]===null) return;
-                        const x=pt.x, yT=ys.getPixelForValue(means[i]+stds[i]), yB=ys.getPixelForValue(means[i]-stds[i]);
-                        ctx.save(); ctx.strokeStyle=color; ctx.lineWidth=1.2;
-                        [[x,yT,x,yB],[x-3,yT,x+3,yT],[x-3,yB,x+3,yB]].forEach(([x1,y1,x2,y2])=>{
-                            ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
-                        });
-                        ctx.restore();
-                    });
-                };
-                bars(0,cyclingTrend.power,cyclingTrend.powerStd,'y','rgba(0,0,0,0.25)');
-                bars(1,cyclingTrend.hr,cyclingTrend.hrStd,'y1','rgba(192,57,43,0.3)');
-            }}]
-        });
-    })();
-
-    // 2 · Aerobic efficiency (W/bpm) with least-squares trend
-    new Chart(document.getElementById('efficiencyChart'),{
-        type:'line',
-        data:{ labels:efficiency.labels, datasets:[
-            {
-                label:'Watts per heartbeat', data:efficiency.value,
-                borderColor:C.black, backgroundColor:'rgba(0,0,0,0.06)',
-                fill:true, tension:0.35, borderWidth:2,
-                pointRadius:3.5, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:1.5
-            },
-            {
-                label:'Trend', data:efficiency.trend,
-                borderColor:C.red, borderWidth:1.8, borderDash:[6,4],
-                fill:false, pointRadius:0, tension:0
-            }
-        ]},
-        options:{
-            responsive:true, interaction:{mode:'index',intersect:false},
-            plugins:{
-                legend:{ position:'top', labels:{color:C.mid,font:{size:11}} },
-                tooltip:{ callbacks:{
-                    title: items => `${items[0].label} · ${efficiency.count[items[0].dataIndex]} effort rides`,
-                    label: ctx => ctx.parsed.y === null ? null
-                        : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(3)} W/bpm`
-                }}
-            },
-            scales:{
-                x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                y:{ title:{display:true,text:'Watts per heartbeat',color:C.black},
-                    ticks:{color:C.mid,callback:v=>v.toFixed(2)}, grid:{color:'rgba(0,0,0,0.04)'} }
-            }
-        }
-    });
-
-    // 3 · Power progression at constant ride length
-    (()=>{
-        const lenColors = { '20':'#c0392b', '30':'#000000', '45':'#666666', '60':'#aaaaaa' };
-        const datasets = powerByLength.buckets
-            .map(b => ({
-                label: b.label,
-                data:  powerByLength.series[b.key],
-                borderColor: lenColors[b.key],
-                backgroundColor: lenColors[b.key],
-                borderWidth: 2, tension:0.3, spanGaps:true,
-                pointRadius:3.5, pointBorderColor:'#fff', pointBorderWidth:1.5
-            }))
-            .filter(ds => ds.data.some(v => v !== null));
-
-        new Chart(document.getElementById('powerByLengthChart'),{
-            type:'line',
-            data:{ labels:powerByLength.labels, datasets },
-            options:{
-                responsive:true, interaction:{mode:'index',intersect:false},
-                plugins:{
-                    legend:{ position:'top', labels:{color:C.mid,font:{size:11},padding:14} },
-                    tooltip:{ callbacks:{ label: ctx => ctx.parsed.y === null ? null
-                        : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(0)} W ` +
-                          `(${powerByLength.counts[powerByLength.buckets.find(b=>b.label===ctx.dataset.label).key][ctx.dataIndex]} rides)` }}
-                },
-                scales:{
-                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                    y:{ title:{display:true,text:'Average power (W)',color:C.black},
-                        ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.04)'} }
-                }
-            }
-        });
-    })();
-
-    // 4 · HR × power scatter by year, with per-year centroids
-    (()=>{
-        const yrs = powerHRScatter.years;
-        // Oldest year lightest, newest darkest+red so the drift reads at a glance
-        const colorFor = i => i === yrs.length-1 ? C.red : grays[Math.min(grays.length-1, (yrs.length-1-i)*2 + 2)];
-
-        const datasets = yrs.map((y,i)=>({
-            label: String(y),
-            data:  powerHRScatter.points[y],
-            backgroundColor: colorFor(i) + (i === yrs.length-1 ? 'cc' : '66'),
-            borderColor: 'transparent',
-            pointRadius: 3, pointHoverRadius: 5, order: 2
-        }));
-
-        // Centroid markers drawn on top
-        yrs.forEach((y,i)=>{
-            const pts = powerHRScatter.points[y];
-            if (!pts.length) return;
-            datasets.push({
-                label: `${y} avg`,
-                data: [{ x: pts.reduce((s,p)=>s+p.x,0)/pts.length,
-                         y: pts.reduce((s,p)=>s+p.y,0)/pts.length }],
-                backgroundColor: colorFor(i),
-                borderColor: '#fff', borderWidth: 2.5,
-                pointRadius: 9, pointHoverRadius: 11, order: 1
-            });
-        });
-
-        new Chart(document.getElementById('scatterChart'),{
-            type:'scatter',
-            data:{ datasets },
-            options:{
-                responsive:true,
-                plugins:{
-                    legend:{ position:'top',
-                        labels:{ color:C.mid, font:{size:11}, padding:12, usePointStyle:true,
-                                 filter: item => !item.text.includes('avg') } },
-                    tooltip:{ callbacks:{ label: ctx =>
-                        `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(0)}W @ ${ctx.parsed.x.toFixed(0)} bpm` +
-                        ` (${(ctx.parsed.y/ctx.parsed.x).toFixed(2)} W/bpm)` }}
-                },
-                scales:{
-                    x:{ title:{display:true,text:'Average heart rate (bpm)',color:C.black},
-                        ticks:{color:C.mid,callback:v=>v+' bpm'}, grid:{color:'rgba(0,0,0,0.04)'} },
-                    y:{ title:{display:true,text:'Average power (W)',color:C.black},
-                        ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.04)'} }
-                }
-            }
-        });
-    })();
-
-    // 5 · Same-class progression — floating bars from early avg to recent avg
-    (()=>{
-        // classProgress is already sorted by gain descending; Chart.js draws index 0 at
-        // the top of a horizontal axis, so no reversal — biggest gain reads first.
-        const rows = classProgress;
-        const clsB  = niceBounds(rows.flatMap(c => [c.early, c.recent]), 0.25);
-        const clsLo = clsB.lo, clsHi = clsB.hi;
-        new Chart(document.getElementById('classProgressChart'),{
-            type:'bar',
-            data:{
-                labels: rows.map(c => c.title.replace(/ Ride$/,'')),
-                datasets:[{
-                    label:'First 3 rides → most recent 3',
-                    data: rows.map(c => [c.early, c.recent]),
-                    backgroundColor: C.red, borderWidth:0, borderSkipped:false,
-                    barPercentage:0.55
-                }]
-            },
-            options:{
-                indexAxis:'y', responsive:true,
-                plugins:{
-                    legend:{display:false},
-                    tooltip:{ callbacks:{ label: ctx => {
-                        const c = rows[ctx.dataIndex];
-                        return [`First 3: ${c.early}W`, `Recent 3: ${c.recent}W`,
-                                `Gain: +${c.gain}W (+${c.pct}%)`,
-                                `Best ever: ${c.best}W · ${c.rides} rides`];
-                    }}}
-                },
-                scales:{
-                    // Bounded to the data, not to zero — see the note in the generic
-                    // renderer: the bar length is the change, and zero-anchoring hides it.
-                    x:{ min:clsLo, max:clsHi,
-                        title:{display:true,text:'Average power (W)',color:C.mid,font:{size:11}},
-                        ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.04)'} },
-                    y:{ ticks:{color:C.mid,font:{size:10}}, grid:{display:false} }
-                }
-            },
-            plugins:[{ afterDatasetsDraw(chart){
-                // Dot the starting end of each bar so direction of travel is unambiguous
-                const ctx = chart.ctx, meta = chart.getDatasetMeta(0), xs = chart.scales.x;
-                meta.data.forEach((bar,i)=>{
-                    const x = xs.getPixelForValue(rows[i].early);
-                    ctx.save();
-                    ctx.fillStyle = '#fff'; ctx.strokeStyle = C.red; ctx.lineWidth = 2;
-                    ctx.beginPath(); ctx.arc(x, bar.y, 4.5, 0, Math.PI*2);
-                    ctx.fill(); ctx.stroke(); ctx.restore();
-                });
-            }}]
-        });
-    })();
-
-    // 6 · Cadence vs resistance
-    new Chart(document.getElementById('cadenceChart'),{
-        type:'line',
-        data:{ labels:cadenceResistance.labels, datasets:[
-            {
-                label:'Cadence (RPM)', data:cadenceResistance.cadence, yAxisID:'y',
-                borderColor:C.black, backgroundColor:'rgba(0,0,0,0.04)',
-                fill:false, tension:0.35, borderWidth:2,
-                pointRadius:3, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:1.5
-            },
-            {
-                label:'Resistance (%)', data:cadenceResistance.resistance, yAxisID:'y1',
-                borderColor:C.red, backgroundColor:'rgba(192,57,43,0.04)',
-                fill:false, tension:0.35, borderWidth:2, borderDash:[5,3],
-                pointRadius:3, pointBackgroundColor:C.red, pointBorderColor:'#fff', pointBorderWidth:1.5
-            }
-        ]},
-        options:{
-            responsive:true, interaction:{mode:'index',intersect:false},
-            plugins:{
-                legend:{ position:'top', labels:{color:C.mid,font:{size:11}} },
-                tooltip:{ callbacks:{ label: ctx => ctx.parsed.y === null ? null
-                    : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}` }}
-            },
-            scales:{
-                x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                y:{ position:'left', title:{display:true,text:'Cadence (RPM)',color:C.black},
-                    ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
-                y1:{ position:'right', title:{display:true,text:'Resistance (%)',color:C.red},
-                     ticks:{color:C.red,callback:v=>v+'%'}, grid:{drawOnChartArea:false} }
-            }
-        }
-    });
-
-    // 6b · Power zone evolution — filled bands between zone boundaries
-    (()=>{
-        const Z = POWER_ZONES;
-        // Each dataset carries its zone's UPPER edge; fill:'-1' paints down to the
-        // band below it, so the stack of fills reproduces the zone ladder without
-        // a stacked axis — which leaves the axis free for the test markers.
-        const bands = Z.map((z,i) => ({
-            label: `${z.name} · ${z.desc}`,
-            data: zoneEvolution.bands[z.name],
-            backgroundColor: z.color,
-            borderColor: 'rgba(255,255,255,0.75)',
-            borderWidth: 1,
-            fill: i === 0 ? 'origin' : '-1',
-            pointRadius: 0, pointHoverRadius: 0, tension: 0.25, order: 3,
-            spanGaps: false
-        }));
-
-        const ftpLine = {
-            label: 'Estimated FTP',
-            data: zoneEvolution.ftp,
-            borderColor: '#000', borderWidth: 2.5, borderDash: [6,3],
-            fill: false, pointRadius: 0, tension: 0.25, order: 2, spanGaps: false
-        };
-
-        // Tests plotted at their month's index; null elsewhere so the marks float free
-        const testPts = zoneEvolution.labels.map((_,i) => {
-            const t = zoneEvolution.tests.find(t => t.i === i);
-            return t ? t.tested : null;
-        });
-        const testMarks = {
-            label: 'Actual FTP test',
-            data: testPts,
-            borderColor: 'transparent', backgroundColor: '#000',
-            pointRadius: 6, pointHoverRadius: 8,
-            pointStyle: 'rectRot', pointBorderColor: '#fff', pointBorderWidth: 2,
-            showLine: false, fill: false, order: 1
-        };
-
-        new Chart(document.getElementById('zoneEvolutionChart'),{
-            type:'line',
-            data:{ labels: zoneEvolution.labels, datasets: [...bands, ftpLine, testMarks] },
-            options:{
-                responsive:true, interaction:{mode:'index',intersect:false},
-                plugins:{
-                    legend:{ position:'top',
-                        labels:{ color:C.mid, font:{size:10}, padding:8, boxWidth:12,
-                                 // `order` drives draw order; without this the reference
-                                 // marks would also lead the legend, ahead of the zones.
-                                 sort:(a,b)=>a.datasetIndex-b.datasetIndex } },
-                    tooltip:{
-                        callbacks:{
-                            title: items => {
-                                const i = items[0].dataIndex;
-                                if (zoneEvolution.ftp[i] !== null)
-                                    return `${zoneEvolution.labels[i]} · est. FTP ${zoneEvolution.ftp[i]}W ` +
-                                           `(from ${zoneEvolution.rides[i]} rides)`;
-                                const g = (zoneEvolution.gapInfo || []).find(g => g.index === i);
-                                if (!g) return `${zoneEvolution.labels[i]} · no riding in the previous 90 days`;
-                                return `${g.months} months away from the bike (${g.from} → ${g.to})` +
-                                       (g.before !== null && g.after !== null
-                                          ? ` · ${g.before}W → ${g.after}W (${g.lossPct}%)` +
-                                            (g.recovery ? ` · ${g.recovery} months to recover` : '')
-                                          : '');
-                            },
-                            label: ctx => {
-                                const i = ctx.dataIndex;
-                                if (ctx.dataset.label === 'Estimated FTP') return null;
-                                if (ctx.dataset.label === 'Actual FTP test') {
-                                    const t = zoneEvolution.tests.find(t => t.i === i);
-                                    return t ? `Actual test: ${t.tested}W (${t.deltaPct >= 0 ? '+' : ''}${t.deltaPct}% vs estimate)` : null;
-                                }
-                                const zi = Z.findIndex(z => `${z.name} · ${z.desc}` === ctx.dataset.label);
-                                if (zi < 0) return null;
-                                const ftp = zoneEvolution.ftp[i];
-                                if (ftp === null) return null;
-                                const lo = Math.round(ftp * Z[zi].lo), hi = Math.round(ftp * Z[zi].hi);
-                                return `${ctx.dataset.label}: ${lo}–${zi === Z.length-1 ? '' : hi}${zi === Z.length-1 ? '+' : ''}W`;
+                ]},
+                options:{
+                    responsive:true, interaction:{mode:'index',intersect:false},
+                    plugins:{
+                        legend:{ display:true, position:'top', labels:{color:C.mid,font:{size:11}} },
+                        tooltip:{ callbacks:{
+                            title: items => `${items[0].label} · ${cyclingTrend.count[items[0].dataIndex]} effort rides`,
+                            label: ctx=>{
+                                const i=ctx.dataIndex, v=ctx.parsed.y;
+                                if(v===null) return null;
+                                return ctx.datasetIndex===0
+                                    ? `Power: ${v.toFixed(1)} W ±${cyclingTrend.powerStd[i].toFixed(1)}`
+                                    : `Cycling HR: ${v.toFixed(1)} bpm ±${cyclingTrend.hrStd[i].toFixed(1)}`;
                             }
+                        }}
+                    },
+                    scales:{
+                        x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                        y:{
+                            type:'linear', position:'left', beginAtZero:true,
+                            title:{display:true,text:'Power (W)',color:C.black},
+                            ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.04)'}
+                        },
+                        y1:{
+                            type:'linear', position:'right', min:100, max:180,
+                            title:{display:true,text:'Cycling Heart Rate (bpm)',color:C.red},
+                            ticks:{color:C.red,callback:v=>v+' bpm'}, grid:{drawOnChartArea:false}
                         }
                     }
                 },
-                scales:{
-                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                    y:{ beginAtZero:true,
-                        title:{display:true,text:'Power (W)',color:C.black},
-                        ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.06)'} }
-                }
-            },
-            plugins:[{
-                // Mark each collapsed lay-off: hatched column, and the cost written
-                // across it, so the gap reads as a fact about the training rather
-                // than as missing data.
-                id:'layoffBands',
-                beforeDatasetsDraw(chart){
-                    const info = zoneEvolution.gapInfo;
-                    if (!info || !info.length) return;
-                    const ctx = chart.ctx, xs = chart.scales.x, ys = chart.scales.y;
-                    info.forEach(g => {
-                        const c = xs.getPixelForValue(g.index);
-                        const half = (xs.width / Math.max(1, xs.ticks.length)) * 0.5;
-                        const x0 = c - half, x1 = c + half;
-                        ctx.save();
-                        ctx.beginPath(); ctx.rect(x0, ys.top, x1-x0, ys.bottom-ys.top); ctx.clip();
-                        ctx.fillStyle = '#fafafa';
-                        ctx.fillRect(x0, ys.top, x1-x0, ys.bottom-ys.top);
-                        ctx.strokeStyle = 'rgba(0,0,0,0.10)'; ctx.lineWidth = 1;
-                        for (let x = x0 - (ys.bottom-ys.top); x < x1; x += 7) {
-                            ctx.beginPath();
-                            ctx.moveTo(x, ys.bottom); ctx.lineTo(x + (ys.bottom-ys.top), ys.top);
-                            ctx.stroke();
-                        }
-                        ctx.restore();
-                        // Side rules so the break edge is unambiguous
-                        ctx.save();
-                        ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1; ctx.setLineDash([3,3]);
-                        [x0,x1].forEach(x => {
-                            ctx.beginPath(); ctx.moveTo(x, ys.top); ctx.lineTo(x, ys.bottom); ctx.stroke();
+                plugins:[{ afterDatasetsDraw(chart){
+                    const ctx=chart.ctx;
+                    const bars=(mi,means,stds,scaleId,color)=>{
+                        const meta=chart.getDatasetMeta(mi), ys=chart.scales[scaleId];
+                        meta.data.forEach((pt,i)=>{
+                            if(means[i]===null) return;
+                            const x=pt.x, yT=ys.getPixelForValue(means[i]+stds[i]), yB=ys.getPixelForValue(means[i]-stds[i]);
+                            ctx.save(); ctx.strokeStyle=color; ctx.lineWidth=1.2;
+                            [[x,yT,x,yB],[x-3,yT,x+3,yT],[x-3,yB,x+3,yB]].forEach(([x1,y1,x2,y2])=>{
+                                ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+                            });
+                            ctx.restore();
                         });
-                        ctx.restore();
-                        // Vertical caption
-                        ctx.save();
-                        ctx.translate((x0+x1)/2, (ys.top+ys.bottom)/2);
-                        ctx.rotate(-Math.PI/2);
-                        ctx.textAlign='center'; ctx.textBaseline='middle';
-                        ctx.fillStyle = C.dark; ctx.font = '600 11px inherit';
-                        ctx.fillText(`${g.months} months off the bike`, 0, 0);
-                        ctx.restore();
-                    });
-                }
-            }]
-        });
+                    };
+                    bars(0,cyclingTrend.power,cyclingTrend.powerStd,'y','rgba(0,0,0,0.25)');
+                    bars(1,cyclingTrend.hr,cyclingTrend.hrStd,'y1','rgba(192,57,43,0.3)');
+                }}]
+            });
+        })();
 
-        // Takeaway: first vs latest zone ladder
-        if (zoneEvolution.firstIdx > -1) {
-            const f0 = zoneEvolution.ftp[zoneEvolution.firstIdx];
-            const f1 = zoneEvolution.ftp[zoneEvolution.lastIdx];
-            const z2 = Z[1], z4 = Z[3];
-            document.getElementById('zoneTakeaway').innerHTML = `
-                <div><div class="k">Estimated FTP</div><div class="v up">${f0} → ${f1}W</div></div>
-                <div><div class="k">Change</div><div class="v up">+${Math.round(100*(f1/f0-1))}%</div></div>
-                <div><div class="k">Zone 2 (Endurance)</div><div class="v">${Math.round(f0*z2.lo)}–${Math.round(f0*z2.hi)} → ${Math.round(f1*z2.lo)}–${Math.round(f1*z2.hi)}W</div></div>
-                <div><div class="k">Zone 4 (Threshold)</div><div class="v">${Math.round(f0*z4.lo)}–${Math.round(f0*z4.hi)} → ${Math.round(f1*z4.lo)}–${Math.round(f1*z4.hi)}W</div></div>`;
-        }
-    })();
-
-    // 6c · Where each ride's average landed, by quarter (100% stacked)
-    new Chart(document.getElementById('zoneMixChart'),{
-        type:'bar',
-        data:{
-            labels: zoneMix.labels,
-            datasets: zoneMix.series.map(sv => ({
-                label: `${sv.name} · ${sv.desc}`,
-                data: sv.data,
-                backgroundColor: sv.color,
-                borderWidth: 0, stack: 'z'
-            }))
-        },
-        options:{
-            responsive:true, interaction:{mode:'index',intersect:false},
-            plugins:{
-                legend:{ position:'top', labels:{color:C.mid,font:{size:10},padding:8,boxWidth:12} },
-                tooltip:{ callbacks:{
-                    title: items => `${items[0].label} · ${zoneMix.counts[items[0].dataIndex]} rides`,
-                    label: ctx => ctx.parsed.y ? `${ctx.dataset.label}: ${ctx.parsed.y}% of rides` : null
-                }}
-            },
-            scales:{
-                x:{ stacked:true, ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                y:{ stacked:true, beginAtZero:true, max:100,
-                    title:{display:true,text:'Share of rides (%)',color:C.black},
-                    ticks:{color:C.mid,callback:v=>v+'%'}, grid:{color:'rgba(0,0,0,0.04)'} }
-            }
-        }
-    });
-
-    // 7 · Power zones — effort rides only
-    new Chart(document.getElementById('powerZoneChart'),{
-        type:'bar',
-        data:{ labels:powerZones.labels, datasets:[{
-            data:powerZones.counts,
-            backgroundColor:grays.slice(0,powerZones.labels.length),
-            borderWidth:0
-        }]},
-        options:{ responsive:true,
-            plugins:{ legend:{display:false},
-                tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} rides` }} },
-            scales:{
-                y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
-                x:{ ticks:{color:C.mid,maxRotation:30,minRotation:30}, grid:{display:false} }
-            }
-        }
-    });
-
-    // 8 · Cycling HR zones
-    new Chart(document.getElementById('hrZoneChart'),{
-        type:'bar',
-        data:{ labels:hrZones.labels, datasets:[{
-            data:hrZones.counts,
-            backgroundColor:grays.slice(0,hrZones.labels.length),
-            borderWidth:0
-        }]},
-        options:{ responsive:true,
-            plugins:{ legend:{display:false},
-                tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} rides` }} },
-            scales:{
-                y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
-                x:{ ticks:{color:C.mid,maxRotation:30,minRotation:30}, grid:{display:false} }
-            }
-        }
-    });
-
-    // ═══════════════════════════════════════════════════════════
-    //  VOLUME & HABIT CHARTS
-    // ═══════════════════════════════════════════════════════════
-
-    // ── Walking, running and rowing, via the shared renderer ───
-    drawDisciplineCharts(disciplineStats.walking);
-    drawDisciplineCharts(disciplineStats.running);
-    drawDisciplineCharts(disciplineStats.rowing);
-
-    // Running's cadence-vs-resistance analogue: speed against grade
-    if (disciplineStats.running.hasTrend) {
-        new Chart(document.getElementById('speedInclineChart'),{
+        // 2 · Aerobic efficiency (W/bpm) with least-squares trend
+        new Chart(document.getElementById('efficiencyChart'),{
             type:'line',
-            data:{ labels:speedIncline.labels, datasets:[
-                { label:'Speed (mph)', data:speedIncline.speed, yAxisID:'y',
-                  borderColor:C.black, backgroundColor:'rgba(0,0,0,0.04)',
-                  fill:false, tension:0.35, borderWidth:2,
-                  pointRadius:3, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:1.5 },
-                { label:'Incline (%)', data:speedIncline.incline, yAxisID:'y1',
-                  borderColor:C.red, backgroundColor:'rgba(192,57,43,0.04)',
-                  fill:false, tension:0.35, borderWidth:2, borderDash:[5,3],
-                  pointRadius:3, pointBackgroundColor:C.red, pointBorderColor:'#fff', pointBorderWidth:1.5 }
+            data:{ labels:efficiency.labels, datasets:[
+                {
+                    label:'Watts per heartbeat', data:efficiency.value,
+                    borderColor:C.black, backgroundColor:'rgba(0,0,0,0.06)',
+                    fill:true, tension:0.35, borderWidth:2,
+                    pointRadius:3.5, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:1.5
+                },
+                {
+                    label:'Trend', data:efficiency.trend,
+                    borderColor:C.red, borderWidth:1.8, borderDash:[6,4],
+                    fill:false, pointRadius:0, tension:0
+                }
             ]},
             options:{
                 responsive:true, interaction:{mode:'index',intersect:false},
                 plugins:{
                     legend:{ position:'top', labels:{color:C.mid,font:{size:11}} },
-                    tooltip:{ callbacks:{ label: ctx => ctx.parsed.y===null ? null
-                        : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}` }}
+                    tooltip:{ callbacks:{
+                        title: items => `${items[0].label} · ${efficiency.count[items[0].dataIndex]} effort rides`,
+                        label: ctx => ctx.parsed.y === null ? null
+                            : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(3)} W/bpm`
+                    }}
                 },
                 scales:{
                     x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                    y:{ position:'left', title:{display:true,text:'Speed (mph)',color:C.black},
+                    y:{ title:{display:true,text:'Watts per heartbeat',color:C.black},
+                        ticks:{color:C.mid,callback:v=>v.toFixed(2)}, grid:{color:'rgba(0,0,0,0.04)'} }
+                }
+            }
+        });
+
+        // 3 · Power progression at constant ride length
+        (()=>{
+            const lenColors = { '20':'#c0392b', '30':'#000000', '45':'#666666', '60':'#aaaaaa' };
+            const datasets = powerByLength.buckets
+                .map(b => ({
+                    label: b.label,
+                    data:  powerByLength.series[b.key],
+                    borderColor: lenColors[b.key],
+                    backgroundColor: lenColors[b.key],
+                    borderWidth: 2, tension:0.3, spanGaps:true,
+                    pointRadius:3.5, pointBorderColor:'#fff', pointBorderWidth:1.5
+                }))
+                .filter(ds => ds.data.some(v => v !== null));
+
+            new Chart(document.getElementById('powerByLengthChart'),{
+                type:'line',
+                data:{ labels:powerByLength.labels, datasets },
+                options:{
+                    responsive:true, interaction:{mode:'index',intersect:false},
+                    plugins:{
+                        legend:{ position:'top', labels:{color:C.mid,font:{size:11},padding:14} },
+                        tooltip:{ callbacks:{ label: ctx => ctx.parsed.y === null ? null
+                            : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(0)} W ` +
+                              `(${powerByLength.counts[powerByLength.buckets.find(b=>b.label===ctx.dataset.label).key][ctx.dataIndex]} rides)` }}
+                    },
+                    scales:{
+                        x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                        y:{ title:{display:true,text:'Average power (W)',color:C.black},
+                            ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.04)'} }
+                    }
+                }
+            });
+        })();
+
+        // 4 · HR × power scatter by year, with per-year centroids
+        (()=>{
+            const yrs = powerHRScatter.years;
+            // Oldest year lightest, newest darkest+red so the drift reads at a glance
+            const colorFor = i => i === yrs.length-1 ? C.red : grays[Math.min(grays.length-1, (yrs.length-1-i)*2 + 2)];
+
+            const datasets = yrs.map((y,i)=>({
+                label: String(y),
+                data:  powerHRScatter.points[y],
+                backgroundColor: colorFor(i) + (i === yrs.length-1 ? 'cc' : '66'),
+                borderColor: 'transparent',
+                pointRadius: 3, pointHoverRadius: 5, order: 2
+            }));
+
+            // Centroid markers drawn on top
+            yrs.forEach((y,i)=>{
+                const pts = powerHRScatter.points[y];
+                if (!pts.length) return;
+                datasets.push({
+                    label: `${y} avg`,
+                    data: [{ x: pts.reduce((s,p)=>s+p.x,0)/pts.length,
+                             y: pts.reduce((s,p)=>s+p.y,0)/pts.length }],
+                    backgroundColor: colorFor(i),
+                    borderColor: '#fff', borderWidth: 2.5,
+                    pointRadius: 9, pointHoverRadius: 11, order: 1
+                });
+            });
+
+            new Chart(document.getElementById('scatterChart'),{
+                type:'scatter',
+                data:{ datasets },
+                options:{
+                    responsive:true,
+                    plugins:{
+                        legend:{ position:'top',
+                            labels:{ color:C.mid, font:{size:11}, padding:12, usePointStyle:true,
+                                     filter: item => !item.text.includes('avg') } },
+                        tooltip:{ callbacks:{ label: ctx =>
+                            `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(0)}W @ ${ctx.parsed.x.toFixed(0)} bpm` +
+                            ` (${(ctx.parsed.y/ctx.parsed.x).toFixed(2)} W/bpm)` }}
+                    },
+                    scales:{
+                        x:{ title:{display:true,text:'Average heart rate (bpm)',color:C.black},
+                            ticks:{color:C.mid,callback:v=>v+' bpm'}, grid:{color:'rgba(0,0,0,0.04)'} },
+                        y:{ title:{display:true,text:'Average power (W)',color:C.black},
+                            ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.04)'} }
+                    }
+                }
+            });
+        })();
+
+        // 5 · Same-class progression — floating bars from early avg to recent avg
+        (()=>{
+            // classProgress is already sorted by gain descending; Chart.js draws index 0 at
+            // the top of a horizontal axis, so no reversal — biggest gain reads first.
+            const rows = classProgress;
+            const clsB  = niceBounds(rows.flatMap(c => [c.early, c.recent]), 0.25);
+            const clsLo = clsB.lo, clsHi = clsB.hi;
+            new Chart(document.getElementById('classProgressChart'),{
+                type:'bar',
+                data:{
+                    labels: rows.map(c => c.title.replace(/ Ride$/,'')),
+                    datasets:[{
+                        label:'First 3 rides → most recent 3',
+                        data: rows.map(c => [c.early, c.recent]),
+                        backgroundColor: C.red, borderWidth:0, borderSkipped:false,
+                        barPercentage:0.55
+                    }]
+                },
+                options:{
+                    indexAxis:'y', responsive:true,
+                    plugins:{
+                        legend:{display:false},
+                        tooltip:{ callbacks:{ label: ctx => {
+                            const c = rows[ctx.dataIndex];
+                            return [`First 3: ${c.early}W`, `Recent 3: ${c.recent}W`,
+                                    `Gain: +${c.gain}W (+${c.pct}%)`,
+                                    `Best ever: ${c.best}W · ${c.rides} rides`];
+                        }}}
+                    },
+                    scales:{
+                        // Bounded to the data, not to zero — see the note in the generic
+                        // renderer: the bar length is the change, and zero-anchoring hides it.
+                        x:{ min:clsLo, max:clsHi,
+                            title:{display:true,text:'Average power (W)',color:C.mid,font:{size:11}},
+                            ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.04)'} },
+                        y:{ ticks:{color:C.mid,font:{size:10}}, grid:{display:false} }
+                    }
+                },
+                plugins:[{ afterDatasetsDraw(chart){
+                    // Dot the starting end of each bar so direction of travel is unambiguous
+                    const ctx = chart.ctx, meta = chart.getDatasetMeta(0), xs = chart.scales.x;
+                    meta.data.forEach((bar,i)=>{
+                        const x = xs.getPixelForValue(rows[i].early);
+                        ctx.save();
+                        ctx.fillStyle = '#fff'; ctx.strokeStyle = C.red; ctx.lineWidth = 2;
+                        ctx.beginPath(); ctx.arc(x, bar.y, 4.5, 0, Math.PI*2);
+                        ctx.fill(); ctx.stroke(); ctx.restore();
+                    });
+                }}]
+            });
+        })();
+
+        // 6 · Cadence vs resistance
+        new Chart(document.getElementById('cadenceChart'),{
+            type:'line',
+            data:{ labels:cadenceResistance.labels, datasets:[
+                {
+                    label:'Cadence (RPM)', data:cadenceResistance.cadence, yAxisID:'y',
+                    borderColor:C.black, backgroundColor:'rgba(0,0,0,0.04)',
+                    fill:false, tension:0.35, borderWidth:2,
+                    pointRadius:3, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:1.5
+                },
+                {
+                    label:'Resistance (%)', data:cadenceResistance.resistance, yAxisID:'y1',
+                    borderColor:C.red, backgroundColor:'rgba(192,57,43,0.04)',
+                    fill:false, tension:0.35, borderWidth:2, borderDash:[5,3],
+                    pointRadius:3, pointBackgroundColor:C.red, pointBorderColor:'#fff', pointBorderWidth:1.5
+                }
+            ]},
+            options:{
+                responsive:true, interaction:{mode:'index',intersect:false},
+                plugins:{
+                    legend:{ position:'top', labels:{color:C.mid,font:{size:11}} },
+                    tooltip:{ callbacks:{ label: ctx => ctx.parsed.y === null ? null
+                        : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}` }}
+                },
+                scales:{
+                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                    y:{ position:'left', title:{display:true,text:'Cadence (RPM)',color:C.black},
                         ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
-                    y1:{ position:'right', title:{display:true,text:'Incline (%)',color:C.red},
+                    y1:{ position:'right', title:{display:true,text:'Resistance (%)',color:C.red},
                          ticks:{color:C.red,callback:v=>v+'%'}, grid:{drawOnChartArea:false} }
                 }
             }
         });
+
+        // 6b · Power zone evolution — filled bands between zone boundaries
+        (()=>{
+            const Z = POWER_ZONES;
+            // Each dataset carries its zone's UPPER edge; fill:'-1' paints down to the
+            // band below it, so the stack of fills reproduces the zone ladder without
+            // a stacked axis — which leaves the axis free for the test markers.
+            const bands = Z.map((z,i) => ({
+                label: `${z.name} · ${z.desc}`,
+                data: zoneEvolution.bands[z.name],
+                backgroundColor: z.color,
+                borderColor: 'rgba(255,255,255,0.75)',
+                borderWidth: 1,
+                fill: i === 0 ? 'origin' : '-1',
+                pointRadius: 0, pointHoverRadius: 0, tension: 0.25, order: 3,
+                spanGaps: false
+            }));
+
+            const ftpLine = {
+                label: 'Estimated FTP',
+                data: zoneEvolution.ftp,
+                borderColor: '#000', borderWidth: 2.5, borderDash: [6,3],
+                fill: false, pointRadius: 0, tension: 0.25, order: 2, spanGaps: false
+            };
+
+            // Tests plotted at their month's index; null elsewhere so the marks float free
+            const testPts = zoneEvolution.labels.map((_,i) => {
+                const t = zoneEvolution.tests.find(t => t.i === i);
+                return t ? t.tested : null;
+            });
+            const testMarks = {
+                label: 'Actual FTP test',
+                data: testPts,
+                borderColor: 'transparent', backgroundColor: '#000',
+                pointRadius: 6, pointHoverRadius: 8,
+                pointStyle: 'rectRot', pointBorderColor: '#fff', pointBorderWidth: 2,
+                showLine: false, fill: false, order: 1
+            };
+
+            new Chart(document.getElementById('zoneEvolutionChart'),{
+                type:'line',
+                data:{ labels: zoneEvolution.labels, datasets: [...bands, ftpLine, testMarks] },
+                options:{
+                    responsive:true, interaction:{mode:'index',intersect:false},
+                    plugins:{
+                        legend:{ position:'top',
+                            labels:{ color:C.mid, font:{size:10}, padding:8, boxWidth:12,
+                                     // `order` drives draw order; without this the reference
+                                     // marks would also lead the legend, ahead of the zones.
+                                     sort:(a,b)=>a.datasetIndex-b.datasetIndex } },
+                        tooltip:{
+                            callbacks:{
+                                title: items => {
+                                    const i = items[0].dataIndex;
+                                    if (zoneEvolution.ftp[i] !== null)
+                                        return `${zoneEvolution.labels[i]} · est. FTP ${zoneEvolution.ftp[i]}W ` +
+                                               `(from ${zoneEvolution.rides[i]} rides)`;
+                                    const g = (zoneEvolution.gapInfo || []).find(g => g.index === i);
+                                    if (!g) return `${zoneEvolution.labels[i]} · no riding in the previous 90 days`;
+                                    return `${g.months} months away from the bike (${g.from} → ${g.to})` +
+                                           (g.before !== null && g.after !== null
+                                              ? ` · ${g.before}W → ${g.after}W (${g.lossPct}%)` +
+                                                (g.recovery ? ` · ${g.recovery} months to recover` : '')
+                                              : '');
+                                },
+                                label: ctx => {
+                                    const i = ctx.dataIndex;
+                                    if (ctx.dataset.label === 'Estimated FTP') return null;
+                                    if (ctx.dataset.label === 'Actual FTP test') {
+                                        const t = zoneEvolution.tests.find(t => t.i === i);
+                                        return t ? `Actual test: ${t.tested}W (${t.deltaPct >= 0 ? '+' : ''}${t.deltaPct}% vs estimate)` : null;
+                                    }
+                                    const zi = Z.findIndex(z => `${z.name} · ${z.desc}` === ctx.dataset.label);
+                                    if (zi < 0) return null;
+                                    const ftp = zoneEvolution.ftp[i];
+                                    if (ftp === null) return null;
+                                    const lo = Math.round(ftp * Z[zi].lo), hi = Math.round(ftp * Z[zi].hi);
+                                    return `${ctx.dataset.label}: ${lo}–${zi === Z.length-1 ? '' : hi}${zi === Z.length-1 ? '+' : ''}W`;
+                                }
+                            }
+                        }
+                    },
+                    scales:{
+                        x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                        y:{ beginAtZero:true,
+                            title:{display:true,text:'Power (W)',color:C.black},
+                            ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.06)'} }
+                    }
+                },
+                plugins:[{
+                    // Mark each collapsed lay-off: hatched column, and the cost written
+                    // across it, so the gap reads as a fact about the training rather
+                    // than as missing data.
+                    id:'layoffBands',
+                    beforeDatasetsDraw(chart){
+                        const info = zoneEvolution.gapInfo;
+                        if (!info || !info.length) return;
+                        const ctx = chart.ctx, xs = chart.scales.x, ys = chart.scales.y;
+                        info.forEach(g => {
+                            const c = xs.getPixelForValue(g.index);
+                            const half = (xs.width / Math.max(1, xs.ticks.length)) * 0.5;
+                            const x0 = c - half, x1 = c + half;
+                            ctx.save();
+                            ctx.beginPath(); ctx.rect(x0, ys.top, x1-x0, ys.bottom-ys.top); ctx.clip();
+                            ctx.fillStyle = '#fafafa';
+                            ctx.fillRect(x0, ys.top, x1-x0, ys.bottom-ys.top);
+                            ctx.strokeStyle = 'rgba(0,0,0,0.10)'; ctx.lineWidth = 1;
+                            for (let x = x0 - (ys.bottom-ys.top); x < x1; x += 7) {
+                                ctx.beginPath();
+                                ctx.moveTo(x, ys.bottom); ctx.lineTo(x + (ys.bottom-ys.top), ys.top);
+                                ctx.stroke();
+                            }
+                            ctx.restore();
+                            // Side rules so the break edge is unambiguous
+                            ctx.save();
+                            ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1; ctx.setLineDash([3,3]);
+                            [x0,x1].forEach(x => {
+                                ctx.beginPath(); ctx.moveTo(x, ys.top); ctx.lineTo(x, ys.bottom); ctx.stroke();
+                            });
+                            ctx.restore();
+                            // Vertical caption
+                            ctx.save();
+                            ctx.translate((x0+x1)/2, (ys.top+ys.bottom)/2);
+                            ctx.rotate(-Math.PI/2);
+                            ctx.textAlign='center'; ctx.textBaseline='middle';
+                            ctx.fillStyle = C.dark; ctx.font = '600 11px inherit';
+                            ctx.fillText(`${g.months} months off the bike`, 0, 0);
+                            ctx.restore();
+                        });
+                    }
+                }]
+            });
+
+            // Takeaway: first vs latest zone ladder
+            if (zoneEvolution.firstIdx > -1) {
+                const f0 = zoneEvolution.ftp[zoneEvolution.firstIdx];
+                const f1 = zoneEvolution.ftp[zoneEvolution.lastIdx];
+                const z2 = Z[1], z4 = Z[3];
+                document.getElementById('zoneTakeaway').innerHTML = `
+                    <div><div class="k">Estimated FTP</div><div class="v up">${f0} → ${f1}W</div></div>
+                    <div><div class="k">Change</div><div class="v up">+${Math.round(100*(f1/f0-1))}%</div></div>
+                    <div><div class="k">Zone 2 (Endurance)</div><div class="v">${Math.round(f0*z2.lo)}–${Math.round(f0*z2.hi)} → ${Math.round(f1*z2.lo)}–${Math.round(f1*z2.hi)}W</div></div>
+                    <div><div class="k">Zone 4 (Threshold)</div><div class="v">${Math.round(f0*z4.lo)}–${Math.round(f0*z4.hi)} → ${Math.round(f1*z4.lo)}–${Math.round(f1*z4.hi)}W</div></div>`;
+            }
+        })();
+
+        // 6c · Where each ride's average landed, by quarter (100% stacked)
+        new Chart(document.getElementById('zoneMixChart'),{
+            type:'bar',
+            data:{
+                labels: zoneMix.labels,
+                datasets: zoneMix.series.map(sv => ({
+                    label: `${sv.name} · ${sv.desc}`,
+                    data: sv.data,
+                    backgroundColor: sv.color,
+                    borderWidth: 0, stack: 'z'
+                }))
+            },
+            options:{
+                responsive:true, interaction:{mode:'index',intersect:false},
+                plugins:{
+                    legend:{ position:'top', labels:{color:C.mid,font:{size:10},padding:8,boxWidth:12} },
+                    tooltip:{ callbacks:{
+                        title: items => `${items[0].label} · ${zoneMix.counts[items[0].dataIndex]} rides`,
+                        label: ctx => ctx.parsed.y ? `${ctx.dataset.label}: ${ctx.parsed.y}% of rides` : null
+                    }}
+                },
+                scales:{
+                    x:{ stacked:true, ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                    y:{ stacked:true, beginAtZero:true, max:100,
+                        title:{display:true,text:'Share of rides (%)',color:C.black},
+                        ticks:{color:C.mid,callback:v=>v+'%'}, grid:{color:'rgba(0,0,0,0.04)'} }
+                }
+            }
+        });
+
+        // 8 · Cycling HR zones
+        new Chart(document.getElementById('hrZoneChart'),{
+            type:'bar',
+            data:{ labels:hrZones.labels, datasets:[{
+                data:hrZones.counts,
+                backgroundColor:grays.slice(0,hrZones.labels.length),
+                borderWidth:0
+            }]},
+            options:{ responsive:true,
+                plugins:{ legend:{display:false},
+                    tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} rides` }} },
+                scales:{
+                    y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
+                    x:{ ticks:{color:C.mid,maxRotation:30,minRotation:30}, grid:{display:false} }
+                }
+            }
+        });
     }
+
+    function drawRunningExtras() {
+        // Running's cadence-vs-resistance analogue: speed against grade
+        if (disciplineStats.running.hasTrend) {
+            new Chart(document.getElementById('speedInclineChart'),{
+                type:'line',
+                data:{ labels:speedIncline.labels, datasets:[
+                    { label:'Speed (mph)', data:speedIncline.speed, yAxisID:'y',
+                      borderColor:C.black, backgroundColor:'rgba(0,0,0,0.04)',
+                      fill:false, tension:0.35, borderWidth:2,
+                      pointRadius:3, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:1.5 },
+                    { label:'Incline (%)', data:speedIncline.incline, yAxisID:'y1',
+                      borderColor:C.red, backgroundColor:'rgba(192,57,43,0.04)',
+                      fill:false, tension:0.35, borderWidth:2, borderDash:[5,3],
+                      pointRadius:3, pointBackgroundColor:C.red, pointBorderColor:'#fff', pointBorderWidth:1.5 }
+                ]},
+                options:{
+                    responsive:true, interaction:{mode:'index',intersect:false},
+                    plugins:{
+                        legend:{ position:'top', labels:{color:C.mid,font:{size:11}} },
+                        tooltip:{ callbacks:{ label: ctx => ctx.parsed.y===null ? null
+                            : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}` }}
+                    },
+                    scales:{
+                        x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                        y:{ position:'left', title:{display:true,text:'Speed (mph)',color:C.black},
+                            ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
+                        y1:{ position:'right', title:{display:true,text:'Incline (%)',color:C.red},
+                             ticks:{color:C.red,callback:v=>v+'%'}, grid:{drawOnChartArea:false} }
+                    }
+                }
+            });
+        }
+    }
+
+    // ── Tab controller ────────────────────────────────────────
+    const TAB_BUILDERS = {
+        cycling: drawCyclingCharts,
+        walking: () => drawDisciplineCharts(disciplineStats.walking),
+        running: () => { drawDisciplineCharts(disciplineStats.running); drawRunningExtras(); },
+        rowing:  () => drawDisciplineCharts(disciplineStats.rowing)
+    };
+    const tabsDrawn = new Set();
+    function showDiscipline(key) {
+        document.querySelectorAll('#discTabs button').forEach(b =>
+            b.setAttribute('aria-selected', String(b.dataset.tab === key)));
+        document.querySelectorAll('.tab-panel').forEach(pnl =>
+            pnl.hidden = pnl.id !== `panel-${key}`);
+        if (!tabsDrawn.has(key)) { tabsDrawn.add(key); (TAB_BUILDERS[key] || (()=>{}))(); }
+    }
+    document.getElementById('discTabs').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-tab]');
+        if (btn) showDiscipline(btn.dataset.tab);
+    });
+    // Draw whichever tab opens first
+    showDiscipline(document.querySelector('#discTabs button')?.dataset.tab || 'cycling');
+
+
+    // ═══════════════════════════════════════════════════════════
+    //  VOLUME & HABIT CHARTS
+    // ═══════════════════════════════════════════════════════════
+
+    // (Walking, running and rowing are drawn by the tab controller above, on
+    //  first activation of their tab.)
 
     // 9 · Discipline breakdown — hours (bars) + session count (line), one chart
     //     replacing the former doughnut + calories bar + time bar trio.
@@ -2336,47 +2285,6 @@ function renderDashboard(data, lastModified) {
         }
     });
 
-    // 10 · Activity-mix pies (greyscale → colour on hover)
-    const pieGrid=document.getElementById('pieGrid');
-    pieGrid.style.setProperty('--pie-cols', Math.min(pieYears.length, 4));
-    pieYears.forEach(yr=>{
-        const yd=activityByYear[yr]; if(!yd) return;
-        const div=document.createElement('div'); div.className='pie-item';
-        div.innerHTML=`<h3>${yr}</h3><canvas id="pie${yr}"></canvas>`;
-        pieGrid.appendChild(div);
-        const labels=Object.keys(yd), values=Object.values(yd), n=labels.length;
-        new Chart(document.getElementById('pie'+yr),{
-            type:'pie',
-            data:{ labels, datasets:[{
-                data:values,
-                backgroundColor:grays.slice(0,n),
-                hoverBackgroundColor:vivid.slice(0,n),
-                borderWidth:2, borderColor:'#fff', hoverBorderColor:'#fff'
-            }]},
-            options:{ responsive:true, plugins:{
-                legend:{display:false},
-                tooltip:{ callbacks:{ label:ctx=>{
-                    const tot=ctx.dataset.data.reduce((a,b)=>a+b,0);
-                    return `${ctx.label}: ${(ctx.parsed/60).toFixed(1)} hrs (${(ctx.parsed/tot*100).toFixed(1)}%)`;
-                }}}
-            }}
-        });
-    });
-
-    // 11 · Timeline
-    new Chart(document.getElementById('timelineChart'),{
-        type:'line',
-        data:{ labels:timeline.labels, datasets:[{
-            label:'Workouts / month', data:timeline.counts,
-            borderColor:C.black, backgroundColor:'rgba(0,0,0,0.05)',
-            fill:true, tension:0.4, borderWidth:2,
-            pointRadius:3, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:1
-        }]},
-        options:{ responsive:true, plugins:{legend:{display:false}},
-            scales:{ x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                     y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} } } }
-    });
-
     // 12 · Time of day
     (()=>{
         const barColors = timeOfDay.counts.map((_,h) => {
@@ -2395,49 +2303,6 @@ function renderDashboard(data, lastModified) {
                     tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} sessions` }} },
                 scales:{
                     x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                    y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} }
-                }
-            }
-        });
-    })();
-
-    // 13 · Year-over-year hours
-    new Chart(document.getElementById('yoyChart'),{
-        type:'bar',
-        data:{ labels:yoyHours.labels, datasets:[{
-            data:yoyHours.hours,
-            backgroundColor: yoyHours.labels.map((_,i)=>grays[Math.min(i,grays.length-1)]),
-            borderWidth:0
-        }]},
-        options:{ responsive:true,
-            plugins:{ legend:{display:false},
-                tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} hrs` }} },
-            scales:{
-                y:{ beginAtZero:true, ticks:{color:C.mid, callback:v=>v+' hrs'}, grid:{color:'rgba(0,0,0,0.04)'} },
-                x:{ ticks:{color:C.mid}, grid:{display:false} }
-            }
-        }
-    });
-
-    // 14 · Monthly volume by year — year list derived from the data
-    (()=>{
-        const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        const byYr={};
-        allYears.forEach(y=>byYr[y]=Array(12).fill(0));
-        heatmap.forEach(r=>{ if(byYr[r.year]) byYr[r.year][r.month-1]=r.count; });
-        // Skip years with almost no data (e.g. a single trial workout years ago)
-        const shown = allYears.filter(y => byYr[y].reduce((a,b)=>a+b,0) >= 10);
-        const shades = ['#1a1a1a','#424242','#6b6b6b','#949494','#bcbcbc','#d8d8d8'];
-        new Chart(document.getElementById('heatmapChart'),{
-            type:'bar',
-            data:{ labels:months, datasets: shown.map((y,i)=>({
-                label:String(y), data:byYr[y],
-                backgroundColor: shades[Math.min(i,shades.length-1)], borderWidth:0
-            }))},
-            options:{ responsive:true,
-                plugins:{ legend:{ position:'top', labels:{color:C.mid,font:{size:11},padding:14} } },
-                scales:{
-                    x:{ ticks:{color:C.mid}, grid:{display:false} },
                     y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} }
                 }
             }
