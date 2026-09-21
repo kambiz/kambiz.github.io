@@ -16,6 +16,7 @@ header_pages:
   - cv/index.html
   - blog/index.html
   - exercise.html
+  - music.html
 
 # Build settings
 theme: minima
