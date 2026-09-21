@@ -66,6 +66,18 @@ body {
    numbers — not a second heading repeating the label. */
 .panel-meta { font-size:.85em; color:#666; margin:-6px 0 22px; }
 
+/* ── Consistency calendar ── */
+.cal-year { margin-bottom:18px; }
+.cal-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; }
+.cal-head .y { font-weight:700; font-size:.95em; }
+.cal-head .s { font-size:.78em; color:#666; }
+.cal-grid { display:grid; grid-auto-flow:column; grid-template-rows:repeat(7,1fr);
+            gap:2px; overflow-x:auto; padding-bottom:4px; }
+.cal-cell { width:11px; height:11px; border-radius:2px; background:#f0f0f0; }
+.cal-legend { display:flex; align-items:center; gap:5px; font-size:.72em; color:#888; margin-top:10px; }
+.cal-legend i { width:11px; height:11px; border-radius:2px; display:inline-block; }
+@media(max-width:600px){ .cal-cell, .cal-legend i { width:8px; height:8px; } }
+
 /* ── Chart containers ── */
 .chart-container { border:1px solid #ccc; padding:24px; margin-bottom:28px; background:#fff; }
 .chart-container h2 { font-size:1.15em; font-weight:600; margin-bottom:5px; letter-spacing:-.2px; }
@@ -168,7 +180,7 @@ canvas { max-height:400px; max-width:100%; }
 // Absolute path: the page is served from /exercise/ (see the permalink in this
 // file's front matter), so a relative name would resolve to /exercise/<file>.
 const CSV_FILENAME  = '/kambizkamrani_workouts.csv';
-const CACHE_KEY     = 'peloton_cache_v13'; // v13: tabbed disciplines, redundant charts removed
+const CACHE_KEY     = 'peloton_cache_v14'; // v14: efficiency index, class type, load/ramp, calendar
 const REQUIRED_COLS = [
     'Workout Timestamp','Fitness Discipline','Length (minutes)',
     'Calories Burned','Avg. Watts','Avg. Heartrate','Instructor Name'
@@ -270,6 +282,16 @@ const DISCIPLINE_SPECS = [
 // A discipline needs this much history before trend lines mean anything.
 const MIN_TREND_MONTHS   = 6;
 const MIN_TREND_SESSIONS = 40;
+// Class-type breakdown thresholds (quoted by the section renderer, so module scope).
+const TYPE_MIN_SESSIONS  = 8;
+const TYPE_MIN_KINDS     = 3;   // fewer than this is a fact, not a chart
+// Weeks of history the acute:chronic ratio compares each week against, and the
+// minimum base below which the ratio is not meaningful (see weeklyLoad).
+const ACWR_CHRONIC_WEEKS     = 4;
+const ACWR_MIN_CHRONIC_HOURS = 2;
+// Calendar shading steps, in minutes of training on the day.
+const CAL_STEPS = [0, 30, 60, 90, 120];
+const CAL_COLORS = ['#f0f0f0','#c8c8c8','#8f8f8f','#5a5a5a','#2b2b2b','#000000'];
 const MIN_PER_LENGTH  = 5;  // duration-split series: needs more, since it splits four ways
 
 // ─────────────────────────────────────────────────────────────
@@ -942,9 +964,23 @@ function processData(rows) {
     // ── Volume & habit views ───────────────────────────────────
     const hourBins = Array(24).fill(0);
     valid.forEach(r => { const h = r.ts.getHours(); if (h >= 0 && h < 24) hourBins[h]++; });
+    // Power by hour, alongside the session count, so the chart answers both
+    // "when do I train" and "when am I strong". Bucketed in 3-hour blocks
+    // because single hours split the effort rides too thin to average.
+    const hourPower = Array.from({length:24}, () => null);
+    const blockRides = {};
+    effort.forEach(r => { const b = Math.floor(r.ts.getHours()/3)*3;
+        (blockRides[b] = blockRides[b] || []).push(num(r,'Avg. Watts')); });
+    Object.entries(blockRides).forEach(([b, w]) => {
+        if (w.length < 15) return;                 // too few to mean anything
+        const mean = +(w.reduce((a,x)=>a+x,0)/w.length).toFixed(1);
+        for (let h = +b; h < +b+3; h++) hourPower[h] = mean;
+    });
     const timeOfDay = {
         labels: Array.from({length:24}, (_,h) => `${String(h).padStart(2,'0')}:00`),
-        counts: hourBins
+        counts: hourBins,
+        power:  hourPower,
+        blockCounts: Array.from({length:24}, (_,h) => (blockRides[Math.floor(h/3)*3] || []).length)
     };
 
     const uniqueDates = [...new Set(valid.map(r=>r.ts.toDateString()))].map(s=>new Date(s)).sort((a,b)=>a-b);
@@ -954,6 +990,138 @@ function processData(rows) {
         if(diff===1){ curStreak++; longestStreak=Math.max(longestStreak,curStreak); } else curStreak=1;
     }
 
+    // ── Cross-discipline efficiency index ─────────────────────
+    // Every discipline's output-per-heartbeat on one axis, each indexed to 100
+    // at its own first qualifying quarter. Indexing is what makes watts and
+    // metres comparable at all; the cost is that a later-starting discipline is
+    // not being compared over the same stretch of time, so this shows the shape
+    // of each curve rather than a fair race between them.
+    const EFF_INDEX_MIN = 5;   // sessions per quarter before a point is drawn
+    const effIndex = { labels: [], series: [] };
+    (() => {
+        const perDisc = DISCIPLINE_SPECS.map(spec => {
+            const ds = disciplineStats[spec.key];
+            if (!ds.hasData) return null;
+            const byQ = groupBy(ds.sessions, r => r._q);
+            const keys = [...byQ.keys()].sort().filter(k => byQ.get(k).length >= EFF_INDEX_MIN);
+            if (keys.length < 2) return null;
+            const meanAt = k => {
+                const v = byQ.get(k).map(r => spec.perf(r)/num(r,'Avg. Heartrate'));
+                return v.reduce((a,b)=>a+b,0)/v.length;
+            };
+            const base = meanAt(keys[0]);
+            return { key:spec.key, label:spec.label,
+                     values: Object.fromEntries(keys.map(k => [k, +(100*meanAt(k)/base).toFixed(1)])) };
+        }).filter(Boolean);
+        if (!perDisc.length) return;
+        effIndex.labels = [...new Set(perDisc.flatMap(d => Object.keys(d.values)))].sort();
+        effIndex.series = perDisc.map(d => ({
+            key:d.key, label:d.label,
+            data: effIndex.labels.map(k => d.values[k] ?? null),
+            gain: Math.round(Object.values(d.values).slice(-1)[0] - 100)
+        }));
+    })();
+
+    // ── Performance by class type, per discipline ─────────────
+    // Peloton's class types are prescriptive: an Intervals ride and an
+    // Endurance ride are different jobs, so a blended average-watts figure
+    // partly tracks which classes were chosen rather than fitness alone.
+    const byClassType = {};
+    DISCIPLINE_SPECS.forEach(spec => {
+        const ds = disciplineStats[spec.key];
+        if (!ds.hasData) return;
+        const m = groupBy(ds.sessions, r => (r['Type'] || 'Just Ride').trim() || 'Just Ride');
+        const rowsOut = [...m.entries()]
+            .filter(([,v]) => v.length >= TYPE_MIN_SESSIONS)
+            .map(([type, v]) => ({
+                type, n: v.length,
+                mean: +(v.reduce((a,r)=>a+spec.perf(r),0)/v.length).toFixed(2),
+                hr:   Math.round(v.reduce((a,r)=>a+num(r,'Avg. Heartrate'),0)/v.length)
+            }))
+            .sort((a,b) => b.mean - a.mean);
+        if (rowsOut.length >= TYPE_MIN_KINDS) byClassType[spec.key] = rowsOut;
+    });
+
+    // ── Weekly load and acute:chronic ratio ───────────────────
+    // Weekly hours against the trailing four-week average. Above ~1.5 is a
+    // sharp ramp; below ~0.8 is a drop-off. A rough guide, not a diagnosis —
+    // it counts hours, not intensity.
+    const weekMap = new Map();
+    valid.forEach(r => {
+        const d = new Date(r.ts); d.setHours(0,0,0,0);
+        d.setDate(d.getDate() - ((d.getDay()+6) % 7));          // back to Monday
+        const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        weekMap.set(k, (weekMap.get(k)||0) + (num(r,'Length (minutes)')||0)/60);
+    });
+    let weekKeys = [...weekMap.keys()].sort();
+    // The final week is usually cut off by the export date; a part-week reads as
+    // a collapse in training rather than in elapsed days, exactly as months did.
+    if (weekKeys.length) {
+        const lastStart = new Date(weekKeys[weekKeys.length-1] + 'T00:00:00');
+        if ((lastDate - lastStart) / 86400000 < 6) weekKeys = weekKeys.slice(0, -1);
+    }
+    // Weeks with no training are absent from the map, which on a categorical axis
+    // would place a long lay-off's bookends side by side and hide it entirely. A
+    // zero-hour week is a training fact, so the series runs continuously and the
+    // gaps are filled with zeros — that is also what makes the ratio meaningful
+    // across a break. The run starts at the first year with real volume, so a
+    // single trial workout years earlier does not drag 70 empty weeks behind it.
+    if (weekKeys.length) {
+        const firstRealYear = [...new Set(valid.map(r => r._yr))].sort((a,b)=>a-b)
+            .find(y => valid.filter(r => r._yr === y).length >= 20);
+        const start = weekKeys.find(k => new Date(k + 'T00:00:00').getFullYear() >= firstRealYear);
+        if (start) {
+            const filled = [];
+            const d = new Date(start + 'T00:00:00');
+            const end = new Date(weekKeys[weekKeys.length-1] + 'T00:00:00');
+            while (d <= end) {
+                const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+                filled.push(k);
+                if (!weekMap.has(k)) weekMap.set(k, 0);
+                d.setDate(d.getDate() + 7);
+            }
+            weekKeys = filled;
+        }
+    }
+    const weeklyLoad = {
+        labels: weekKeys,
+        hours:  weekKeys.map(k => +weekMap.get(k).toFixed(1)),
+        acwr:   weekKeys.map((k,i) => {
+            if (i < ACWR_CHRONIC_WEEKS) return null;
+            const prev = weekKeys.slice(i-ACWR_CHRONIC_WEEKS, i).map(x => weekMap.get(x));
+            const chronic = prev.reduce((a,b)=>a+b,0)/prev.length;
+            // Coming back from a lay-off divides by roughly nothing, which sends
+            // the ratio to 10+ and flattens every real fluctuation against it.
+            // Returning from zero is a restart, not a ramp, so the ratio simply
+            // is not defined until there is a base to compare against.
+            return chronic >= ACWR_MIN_CHRONIC_HOURS
+                ? +(weekMap.get(k)/chronic).toFixed(2) : null;
+        })
+    };
+
+    // ── Consistency calendar ──────────────────────────────────
+    const dayMinutes = new Map();
+    valid.forEach(r => {
+        const k = `${r.ts.getFullYear()}-${String(r.ts.getMonth()+1).padStart(2,'0')}-${String(r.ts.getDate()).padStart(2,'0')}`;
+        dayMinutes.set(k, (dayMinutes.get(k)||0) + (num(r,'Length (minutes)')||0));
+    });
+    const calYears = [...new Set(valid.map(r => r._yr))].sort((a,b)=>a-b)
+        // A year with a handful of days is a row of empty squares; skip it.
+        .filter(y => valid.filter(r => r._yr === y).length >= 20);
+    const calendar = calYears.map(y => {
+        const days = [];
+        for (let d = new Date(y,0,1); d.getFullYear() === y; d.setDate(d.getDate()+1)) {
+            const k = `${y}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+            days.push({ date:k, dow:(d.getDay()+6)%7, month:d.getMonth(),
+                        mins: Math.round(dayMinutes.get(k) || 0),
+                        future: d > lastDate });
+        }
+        const active = days.filter(d => d.mins > 0).length;
+        const elapsed = days.filter(d => new Date(d.date) <= lastDate).length;
+        return { year:y, days, active, elapsed,
+                 pct: elapsed ? Math.round(100*active/elapsed) : 0 };
+    });
+
     console.log(`✅ ${valid.length} workouts · ${effort.length} effort rides · ` +
                 `power ${progression.powerEarly}→${progression.powerNow}W · ` +
                 `HR ${progression.hrEarly}→${progression.hrNow}bpm · ` +
@@ -961,7 +1129,8 @@ function processData(rows) {
 
     return { stats, longestStreak, disciplines, instructors,
              disciplineStats, cadenceResistance, speedIncline, hrZones, timeOfDay,
-             monthlyHours, partialNote, zoneEvolution, zoneMix, POWER_ZONES };
+             monthlyHours, partialNote, zoneEvolution, zoneMix, POWER_ZONES,
+             effIndex, byClassType, weeklyLoad, calendar };
 }
 
 
@@ -1045,6 +1214,16 @@ function disciplineSectionHTML(ds, notes) {
             ${notes.scatter ? `<div class="method-note">${notes.scatter}</div>` : ''}
         </div>`;
 
+    if (notes.byType) {
+        html += `
+        <div class="chart-container">
+            <h2>${S.perfName} by Class Type (${S.label})</h2>
+            <div class="description">Average ${S.perfName.toLowerCase()} per Peloton class type, with average heart rate alongside — types with ${TYPE_MIN_SESSIONS}+ sessions</div>
+            <canvas id="${k}TypeChart"></canvas>
+            <div class="method-note">${notes.byType}</div>
+        </div>`;
+    }
+
     // One or two repeated classes is a data point, not a chart.
     if (ds.classProgress.length >= 3) {
         html += `
@@ -1068,6 +1247,47 @@ function disciplineSectionHTML(ds, notes) {
         </div>`;
     }
     return html;
+}
+
+// Bars are the performance metric, the line is heart rate on a second axis —
+// so a type that is merely harder is distinguishable from one that is faster
+// for the same effort.
+function drawClassTypeChart(canvasId, rows, S) {
+    const el = document.getElementById(canvasId);
+    if (!el) return;
+    new Chart(el, {
+        data:{
+            labels: rows.map(r => r.type),
+            datasets:[
+                { type:'bar', label:S.perfName, data: rows.map(r => S.toDisplay(r.mean)),
+                  backgroundColor: grays, borderWidth:0, yAxisID:'y', order:2 },
+                { type:'line', label:'Avg. heart rate', data: rows.map(r => r.hr),
+                  borderColor:C.red, backgroundColor:C.red, borderWidth:2, tension:0,
+                  pointRadius:4, pointBackgroundColor:C.red, pointBorderColor:'#fff',
+                  pointBorderWidth:1.5, fill:false, yAxisID:'y1', order:1 }
+            ]
+        },
+        options:{
+            responsive:true, interaction:{mode:'index',intersect:false},
+            plugins:{
+                legend:{ position:'top', labels:{color:C.mid,font:{size:11},usePointStyle:true} },
+                tooltip:{ callbacks:{
+                    title: items => `${items[0].label} · ${rows[items[0].dataIndex].n} sessions`,
+                    label: ctx => ctx.datasetIndex === 0
+                        ? `${S.perfName}: ${S.fmt(rows[ctx.dataIndex].mean)}`
+                        : `Heart rate: ${ctx.parsed.y} bpm`
+                }}
+            },
+            scales:{
+                x:{ ticks:{color:C.mid,maxRotation:35,minRotation:35,font:{size:10}}, grid:{display:false} },
+                y:{ position:'left', beginAtZero:false,
+                    title:{display:true,text:S.perfAxis,color:C.black},
+                    ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
+                y1:{ position:'right', title:{display:true,text:'Heart rate (bpm)',color:C.red},
+                     ticks:{color:C.red,callback:v=>v+' bpm'}, grid:{drawOnChartArea:false} }
+            }
+        }
+    });
 }
 
 function drawDisciplineCharts(ds) {
@@ -1255,6 +1475,11 @@ function drawDisciplineCharts(ds) {
         });
     })();
 
+    // ── Performance by class type ──────────────────────────────
+    if (window.__byClassType && window.__byClassType[k]) {
+        drawClassTypeChart(`${k}TypeChart`, window.__byClassType[k], S);
+    }
+
     // ── Same class, repeated ───────────────────────────────────
     if (ds.classProgress.length >= 3) {
         const rows = ds.classProgress;
@@ -1309,7 +1534,8 @@ function drawDisciplineCharts(ds) {
 function renderDashboard(data, lastModified) {
     const { stats, longestStreak, disciplines, instructors,
             disciplineStats, cadenceResistance, speedIncline, hrZones, timeOfDay,
-            monthlyHours, partialNote, zoneEvolution, zoneMix, POWER_ZONES } = data;
+            monthlyHours, partialNote, zoneEvolution, zoneMix, POWER_ZONES,
+            effIndex, byClassType, weeklyLoad, calendar } = data;
 
     // The cycling section predates the generic analyzer and reads these names
     // directly; map them across rather than rewriting eight working charts.
@@ -1376,6 +1602,23 @@ function renderDashboard(data, lastModified) {
             <p>Each sport measured on its own terms — watts on the bike, speed on foot, pace on the rower —
                all sharing one efficiency metric: output per heartbeat.</p>
         </div>
+
+        ${effIndex.series.length >= 2 ? `
+        <div class="chart-container feature">
+            <h2>Which Engine Is Improving Fastest</h2>
+            <div class="description">Output per heartbeat, each discipline indexed to 100 at its own first full quarter</div>
+            <canvas id="effIndexChart"></canvas>
+            <div class="takeaway" id="effIndexTakeaway"></div>
+            <div class="method-note">
+                Watts and metres cannot be compared directly, but their <em>rates of change</em> can.
+                Indexing each discipline to its own starting point puts all four on one axis:
+                100 is where that sport began, 150 means half again as much output for the same
+                cardiovascular cost.
+                <b>The comparison is of shape, not of a fair race</b> — each curve starts when that
+                discipline started, so cycling is showing three years of adaptation while rowing is
+                showing two quarters, and early gains in any sport are always the cheapest.
+            </div>
+        </div>` : ''}
 
         <div class="tabs" role="tablist" id="discTabs">
             ${DISCIPLINE_SPECS.filter(sp => disciplineStats[sp.key].hasData).map((sp,i) => `
@@ -1520,6 +1763,25 @@ function renderDashboard(data, lastModified) {
             </div>
         </div>
 
+        ${byClassType.cycling ? `
+        <div class="chart-container">
+            <h2>Power by Class Type (Cycling)</h2>
+            <div class="description">Average watts per Peloton class type, with average heart rate alongside — types with ${TYPE_MIN_SESSIONS}+ rides</div>
+            <canvas id="cyclingTypeChart"></canvas>
+            <div class="method-note">
+                Class types are prescriptive, so this is mostly a picture of what each class asks for
+                rather than of form. The useful consequence is that <b>a blended average-watts figure
+                partly tracks class choice, not just fitness</b>: Power Zone rides sit lowest here because
+                Endurance work is deliberately submaximal, not because they went badly. Ride length is
+                already controlled for elsewhere in this section; this is the same confound in another
+                dimension.
+                ${(() => { const t = byClassType.cycling;
+                    return `Widest gap: <b>${t[0].type} ${Math.round(t[0].mean)}W</b> against
+                            <b>${t[t.length-1].type} ${Math.round(t[t.length-1].mean)}W</b> —
+                            ${Math.round(t[0].mean - t[t.length-1].mean)}W apart.`; })()}
+            </div>
+        </div>` : ''}
+
         <div class="chart-container">
             <h2>Cycling Heart Rate Zone Distribution</h2>
             <div class="description">Effort rides by average heart rate — cycling only</div>
@@ -1544,7 +1806,10 @@ function renderDashboard(data, lastModified) {
                      incline is missing for walks, some of the vertical spread is terrain rather than form.`,
             klass:  `Hike classes repeat the same simulated route and grade, which is exactly why they are
                      the most trustworthy comparison in this section — the terrain that confounds the other
-                     walking charts is held fixed here.`
+                     walking charts is held fixed here.`,
+            byType: byClassType.walking ? `Hikes run slower than music walks by design — the grade does the
+                    work instead of the pace. Reading walking speed without the class type behind it makes a
+                    block of hiking look like a loss of fitness.` : null
         })}
 
         </div><!-- /panel-walking -->
@@ -1614,8 +1879,44 @@ function renderDashboard(data, lastModified) {
 
         <div class="chart-container">
             <h2>Workout Time of Day</h2>
-            <div class="description">Total sessions by hour across all workouts</div>
+            <div class="description">Bars: all sessions by hour &nbsp;|&nbsp; Line: average cycling power in that part of the day</div>
             <canvas id="timeOfDayChart"></canvas>
+            <div class="method-note">
+                Power is averaged in three-hour blocks, not single hours — one hour splits the effort
+                rides too thin to mean anything — and a block is left blank below 15 rides.
+                ${(() => {
+                    const pts = timeOfDay.power.map((v,i)=>({v,i})).filter(x=>x.v!==null);
+                    if (pts.length < 2) return '';
+                    const lo = pts.reduce((a,b)=>b.v<a.v?b:a), hi = pts.reduce((a,b)=>b.v>a.v?b:a);
+                    const hr = h => `${String(h).padStart(2,'0')}:00`;
+                    return `Weakest around <b>${hr(Math.floor(lo.i/3)*3)}</b> at ${lo.v}W, strongest around
+                            <b>${hr(Math.floor(hi.i/3)*3)}</b> at ${hi.v}W — a
+                            ${Math.round(100*(hi.v/lo.v-1))}% spread across the day.
+                            Worth reading against the bars: the hours with the most sessions are not
+                            necessarily the hours with the best output.`;
+                })()}
+            </div>
+        </div>
+
+        <div class="chart-container feature">
+            <h2>Weekly Load and Ramp Rate</h2>
+            <div class="description">Bars: hours trained each week &nbsp;|&nbsp; Line: that week against the trailing ${ACWR_CHRONIC_WEEKS}-week average</div>
+            <canvas id="loadChart"></canvas>
+            <div class="method-note">
+                The ratio compares one week's hours to the four before it. Around 1.0 is steady; a sharp
+                ramp (roughly 1.5 and above) is the pattern most often associated with picking up an
+                injury, and a sustained dip below about 0.8 is detraining — the same slide the 2024
+                lay-off shows in the power-zone chart.
+                <b>This counts hours, not intensity</b>, so a week of easy volume and a week of intervals
+                weigh the same here; treat it as a rough guide rather than a verdict.
+                ${partialNote ? `The current part-week is excluded, for the same reason partial months are.` : ''}
+            </div>
+        </div>
+
+        <div class="chart-container feature">
+            <h2>Every Day You Trained</h2>
+            <div class="description">One square per day, shaded by minutes — the darker the square, the longer the session</div>
+            <div id="calendar"></div>
         </div>
 
         <div class="chart-container">
@@ -1662,6 +1963,8 @@ function renderDashboard(data, lastModified) {
     // zero — charts built there come out blank and stay blank. Deferring also
     // keeps first paint to one discipline's worth of work instead of four.
     function drawCyclingCharts() {
+        if (byClassType.cycling)
+            drawClassTypeChart('cyclingTypeChart', byClassType.cycling, disciplineStats.cycling.spec);
         // ═══════════════════════════════════════════════════════════
         //  FITNESS PROGRESSION CHARTS
         // ═══════════════════════════════════════════════════════════
@@ -2166,6 +2469,50 @@ function renderDashboard(data, lastModified) {
         }
     }
 
+    // The generic panel renderer draws lazily, after this scope has returned,
+    // so its class-type data is parked where that callback can reach it.
+    window.__byClassType = byClassType;
+
+    // ── Cross-discipline efficiency index ─────────────────────
+    if (effIndex.series.length >= 2) {
+        const lineColors = { cycling:'#000000', walking:'#c0392b', running:'#e0573f', rowing:'#8f8f8f' };
+        new Chart(document.getElementById('effIndexChart'),{
+            type:'line',
+            data:{ labels: effIndex.labels, datasets: effIndex.series.map(sv => ({
+                label: sv.label, data: sv.data,
+                borderColor: lineColors[sv.key] || C.mid,
+                backgroundColor: lineColors[sv.key] || C.mid,
+                borderWidth:2.5, tension:0.3, spanGaps:true,
+                pointRadius:3.5, pointBorderColor:'#fff', pointBorderWidth:1.5
+            }))},
+            options:{
+                responsive:true, interaction:{mode:'index',intersect:false},
+                plugins:{
+                    legend:{ position:'top', labels:{color:C.mid,font:{size:11},padding:14,usePointStyle:true} },
+                    tooltip:{ callbacks:{ label: ctx => ctx.parsed.y === null ? null
+                        : `${ctx.dataset.label}: ${ctx.parsed.y} (${ctx.parsed.y>=100?'+':''}${Math.round(ctx.parsed.y-100)}% vs its start)` }}
+                },
+                scales:{
+                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
+                    y:{ title:{display:true,text:'Efficiency index (start = 100)',color:C.black},
+                        ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} }
+                }
+            },
+            plugins:[{ id:'baseline100', beforeDatasetsDraw(chart){
+                // The 100 line is the reference every curve is measured from.
+                const ys = chart.scales.y, ctx = chart.ctx;
+                if (100 < ys.min || 100 > ys.max) return;
+                const y = ys.getPixelForValue(100);
+                ctx.save(); ctx.strokeStyle='rgba(0,0,0,0.30)'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+                ctx.beginPath(); ctx.moveTo(chart.scales.x.left,y); ctx.lineTo(chart.scales.x.right,y); ctx.stroke();
+                ctx.restore();
+            }}]
+        });
+        document.getElementById('effIndexTakeaway').innerHTML = effIndex.series.map(sv =>
+            `<div><div class="k">${sv.label}</div><div class="v ${sv.gain>=0?'up':''}">${sv.gain>=0?'+':''}${sv.gain}%</div></div>`
+        ).join('');
+    }
+
     // ── Tab controller ────────────────────────────────────────
     const TAB_BUILDERS = {
         cycling: drawCyclingCharts,
@@ -2293,20 +2640,137 @@ function renderDashboard(data, lastModified) {
             if (h >= 18 && h <= 22) return '#8c8c8c';
             return '#c4c4c4';
         });
+        const pw = timeOfDay.power.filter(v=>v!==null);
         new Chart(document.getElementById('timeOfDayChart'),{
-            type:'bar',
-            data:{ labels:timeOfDay.labels, datasets:[{
-                label:'Sessions', data:timeOfDay.counts, backgroundColor:barColors, borderWidth:0
-            }]},
-            options:{ responsive:true,
-                plugins:{ legend:{display:false},
-                    tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} sessions` }} },
+            data:{ labels:timeOfDay.labels, datasets:[
+                { type:'bar', label:'Sessions', data:timeOfDay.counts,
+                  backgroundColor:barColors, borderWidth:0, yAxisID:'y', order:2 },
+                { type:'line', label:'Avg. cycling power', data:timeOfDay.power, yAxisID:'y1',
+                  borderColor:C.red, backgroundColor:'rgba(192,57,43,0.05)', borderWidth:2.5,
+                  tension:0, pointRadius:0, fill:false, spanGaps:false, order:1 }
+            ]},
+            options:{ responsive:true, interaction:{mode:'index',intersect:false},
+                plugins:{
+                    legend:{ position:'top', labels:{color:C.mid,font:{size:11},usePointStyle:true} },
+                    tooltip:{ callbacks:{ label: ctx => {
+                        if (ctx.datasetIndex === 0) return `${ctx.parsed.y} sessions`;
+                        if (ctx.parsed.y === null) return null;
+                        return `Cycling power: ${ctx.parsed.y}W (${timeOfDay.blockCounts[ctx.dataIndex]} rides in this block)`;
+                    }}}
+                },
                 scales:{
                     x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                    y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} }
+                    y:{ position:'left', beginAtZero:true,
+                        title:{display:true,text:'Sessions',color:C.black},
+                        ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
+                    y1:{ position:'right',
+                         min: pw.length ? Math.floor((Math.min(...pw)-20)/10)*10 : 0,
+                         max: pw.length ? Math.ceil((Math.max(...pw)+20)/10)*10 : 100,
+                         title:{display:true,text:'Avg. cycling power (W)',color:C.red},
+                         ticks:{color:C.red,callback:v=>v+'W'}, grid:{drawOnChartArea:false} }
                 }
             }
         });
+    })();
+
+    // 15b · Weekly load with acute:chronic ratio
+    (()=>{
+        const el = document.getElementById('loadChart');
+        if (!el || !weeklyLoad.labels.length) return;
+        // Colour the bars by the ratio so ramps and drop-offs read without the line.
+        const barCols = weeklyLoad.acwr.map(a =>
+            a === null ? '#c4c4c4' : a > 1.5 ? '#c0392b' : a < 0.8 ? '#d8d8d8' : '#575757');
+        new Chart(el,{
+            data:{ labels: weeklyLoad.labels, datasets:[
+                { type:'bar', label:'Hours trained', data: weeklyLoad.hours,
+                  backgroundColor: barCols, borderWidth:0, yAxisID:'y', order:2 },
+                { type:'line', label:`Week vs trailing ${ACWR_CHRONIC_WEEKS}-week average`,
+                  data: weeklyLoad.acwr, yAxisID:'y1',
+                  borderColor:'#000', borderWidth:1.8, borderDash:[5,3],
+                  tension:0.25, pointRadius:0, fill:false, spanGaps:false, order:1 }
+            ]},
+            options:{
+                responsive:true, interaction:{mode:'index',intersect:false},
+                plugins:{
+                    legend:{ position:'top',
+                        labels:{ color:C.mid, font:{size:10}, usePointStyle:true,
+                                 sort:(a,b)=>a.datasetIndex-b.datasetIndex } },
+                    tooltip:{ callbacks:{
+                        title: items => `Week of ${items[0].label}`,
+                        label: ctx => ctx.datasetIndex === 0
+                            ? `${ctx.parsed.y} hours`
+                            : (ctx.parsed.y === null ? null
+                               : `Ratio ${ctx.parsed.y}` + (ctx.parsed.y > 1.5 ? ' — sharp ramp'
+                                  : ctx.parsed.y < 0.8 ? ' — drop-off' : ''))
+                    }}
+                },
+                scales:{
+                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45,autoSkip:true,maxTicksLimit:16},
+                        grid:{display:false} },
+                    y:{ position:'left', beginAtZero:true,
+                        title:{display:true,text:'Hours in the week',color:C.black},
+                        ticks:{color:C.mid,callback:v=>v+' h'}, grid:{color:'rgba(0,0,0,0.04)'} },
+                    y1:{ position:'right', beginAtZero:true,
+                         max: Math.max(2, Math.ceil(Math.max(
+                             ...weeklyLoad.acwr.filter(v=>v!==null), 1.5) * 4) / 4),
+                         title:{display:true,text:'Acute : chronic ratio',color:C.black},
+                         ticks:{color:C.mid}, grid:{drawOnChartArea:false} }
+                }
+            },
+            plugins:[{ id:'acwrBands', beforeDatasetsDraw(chart){
+                // Shade the 0.8–1.5 corridor so "normal" is visible, not memorised.
+                const ys = chart.scales.y1, xs = chart.scales.x, ctx = chart.ctx;
+                if (!ys) return;
+                const yTop = ys.getPixelForValue(1.5), yBot = ys.getPixelForValue(0.8);
+                ctx.save();
+                ctx.fillStyle = 'rgba(0,0,0,0.035)';
+                ctx.fillRect(xs.left, yTop, xs.right-xs.left, yBot-yTop);
+                ctx.restore();
+            }}]
+        });
+    })();
+
+    // 15c · Consistency calendar
+    (()=>{
+        const host = document.getElementById('calendar');
+        if (!host || !calendar.length) return;
+        const shade = mins => {
+            if (!mins) return CAL_COLORS[0];
+            let i = 0; while (i < CAL_STEPS.length && mins > CAL_STEPS[i]) i++;
+            return CAL_COLORS[Math.min(i, CAL_COLORS.length-1)];
+        };
+        const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        calendar.forEach(y => {
+            const wrap = document.createElement('div');
+            wrap.className = 'cal-year';
+            wrap.innerHTML = `<div class="cal-head"><span class="y">${y.year}</span>` +
+                `<span class="s">${y.active} active days of ${y.elapsed} elapsed · ${y.pct}%</span></div>`;
+            const grid = document.createElement('div');
+            grid.className = 'cal-grid';
+            // Pad so the first column starts on the right weekday
+            for (let i = 0; i < y.days[0].dow; i++) {
+                const pad = document.createElement('div');
+                pad.className = 'cal-cell'; pad.style.background = 'transparent';
+                grid.appendChild(pad);
+            }
+            y.days.forEach(d => {
+                const cell = document.createElement('div');
+                cell.className = 'cal-cell';
+                // A day that has not arrived yet is blank, not a rest day —
+                // otherwise the rest of the year reads as months of nothing.
+                cell.style.background = d.future ? 'transparent' : shade(d.mins);
+                cell.title = d.future ? `${d.date} · not yet`
+                           : d.mins ? `${d.date} · ${d.mins} min` : `${d.date} · rest`;
+                grid.appendChild(cell);
+            });
+            wrap.appendChild(grid);
+            host.appendChild(wrap);
+        });
+        const legend = document.createElement('div');
+        legend.className = 'cal-legend';
+        legend.innerHTML = 'Rest' + CAL_COLORS.map(c=>`<i style="background:${c}"></i>`).join('') +
+            `${CAL_STEPS[CAL_STEPS.length-1]}+ min`;
+        host.appendChild(legend);
     })();
 
     // 15 · Instructors
