@@ -28,6 +28,9 @@ body {
 .header-meta { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; }
 .header .subtitle { font-size:.95em; color:#666; }
 .last-updated { font-size:.78em; color:#999; font-style:italic; }
+.nav-link { font-size:.78em; color:#999; }
+.nav-link a { color:#999; text-decoration:none; }
+.nav-link a:hover { color:#000; text-decoration:underline; }
 
 /* ── Stat cards ── */
 .stats-grid {
@@ -1589,6 +1592,7 @@ function renderDashboard(data, lastModified) {
             <div class="header-meta">
                 <span class="subtitle">${stats.totalWorkouts.toLocaleString()} workouts &nbsp;|&nbsp; ${stats.firstDate} – ${stats.lastDate}</span>
                 ${luStr ? `<span class="last-updated">Data last updated: ${luStr}</span>` : ''}
+                <span class="nav-link"><a href="/">Home</a> &middot; <a href="/cv/">CV</a> &middot; <a href="/blog/">Blog</a></span>
             </div>
         </div>
 
