@@ -74,7 +74,9 @@ body {
 .cal-grid { display:grid; grid-auto-flow:column; grid-template-rows:repeat(7,1fr);
             gap:2px; overflow-x:auto; padding-bottom:4px; }
 .cal-cell { width:11px; height:11px; border-radius:2px; background:#f0f0f0; }
-.cal-legend { display:flex; align-items:center; gap:5px; font-size:.72em; color:#888; margin-top:10px; }
+.cal-legend { display:flex; align-items:center; gap:4px; flex-wrap:wrap;
+               font-size:.72em; color:#888; margin-top:10px; }
+.cal-legend .gap { margin-left:14px; }
 .cal-legend i { width:11px; height:11px; border-radius:2px; display:inline-block; }
 @media(max-width:600px){ .cal-cell, .cal-legend i { width:8px; height:8px; } }
 
@@ -203,7 +205,7 @@ canvas { max-height:400px; max-width:100%; }
 // Absolute path: the page is served from /exercise/ (see the permalink in this
 // file's front matter), so a relative name would resolve to /exercise/<file>.
 const CSV_FILENAME  = '/kambizkamrani_workouts.csv';
-const CACHE_KEY     = 'peloton_cache_v14'; // v14: efficiency index, class type, load/ramp, calendar
+const CACHE_KEY     = 'peloton_cache_v15'; // v15: calendar splits training from recovery-only days
 const REQUIRED_COLS = [
     'Workout Timestamp','Fitness Discipline','Length (minutes)',
     'Calories Burned','Avg. Watts','Avg. Heartrate','Instructor Name'
@@ -312,9 +314,15 @@ const TYPE_MIN_KINDS     = 3;   // fewer than this is a fact, not a chart
 // minimum base below which the ratio is not meaningful (see weeklyLoad).
 const ACWR_CHRONIC_WEEKS     = 4;
 const ACWR_MIN_CHRONIC_HOURS = 2;
-// Calendar shading steps, in minutes of training on the day.
-const CAL_STEPS = [0, 30, 60, 90, 120];
-const CAL_COLORS = ['#f0f0f0','#c8c8c8','#8f8f8f','#5a5a5a','#2b2b2b','#000000'];
+// Calendar shading steps, in minutes logged on the day. Two ramps of the same
+// intensity so a day's length still reads, while hue separates a training day
+// from one spent entirely on yoga, stretching or meditation — the distinction
+// a raw "active day" count hides.
+const CAL_STEPS  = [0, 30, 60, 90, 120];
+const CAL_TRAIN  = ['#f0f0f0','#c8c8c8','#8f8f8f','#5a5a5a','#2b2b2b','#000000'];
+const CAL_RECOV  = ['#f0f0f0','#f3ded9','#e4b5ab','#d28b7c','#c0654f','#a8452f'];
+// What counts as training rather than recovery.
+const TRAINING_DISCIPLINES = ['Cycling','Running','Walking','Rowing','Strength','Cardio'];
 const MIN_PER_LENGTH  = 5;  // duration-split series: needs more, since it splits four ways
 
 // ─────────────────────────────────────────────────────────────
@@ -1123,25 +1131,38 @@ function processData(rows) {
     };
 
     // ── Consistency calendar ──────────────────────────────────
+    // Whole-history split of active days, so the note can say how much of the
+    // streak is training and how much is recovery practice.
     const dayMinutes = new Map();
+    const dayTrained = new Set();
     valid.forEach(r => {
         const k = `${r.ts.getFullYear()}-${String(r.ts.getMonth()+1).padStart(2,'0')}-${String(r.ts.getDate()).padStart(2,'0')}`;
         dayMinutes.set(k, (dayMinutes.get(k)||0) + (num(r,'Length (minutes)')||0));
+        if (TRAINING_DISCIPLINES.includes(r['Fitness Discipline'])) dayTrained.add(k);
     });
     const calYears = [...new Set(valid.map(r => r._yr))].sort((a,b)=>a-b)
         // A year with a handful of days is a row of empty squares; skip it.
         .filter(y => valid.filter(r => r._yr === y).length >= 20);
+    const calSummary = (() => {
+        const all = [...dayMinutes.keys()];
+        const trained = all.filter(k => dayTrained.has(k)).length;
+        return { active: all.length, trained, recovery: all.length - trained,
+                 pctTrained: all.length ? Math.round(100*trained/all.length) : 0 };
+    })();
     const calendar = calYears.map(y => {
         const days = [];
         for (let d = new Date(y,0,1); d.getFullYear() === y; d.setDate(d.getDate()+1)) {
             const k = `${y}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
             days.push({ date:k, dow:(d.getDay()+6)%7, month:d.getMonth(),
                         mins: Math.round(dayMinutes.get(k) || 0),
+                        trained: dayTrained.has(k),
                         future: d > lastDate });
         }
-        const active = days.filter(d => d.mins > 0).length;
-        const elapsed = days.filter(d => new Date(d.date) <= lastDate).length;
-        return { year:y, days, active, elapsed,
+        const active   = days.filter(d => d.mins > 0).length;
+        const trained  = days.filter(d => d.trained).length;
+        const recovery = active - trained;
+        const elapsed  = days.filter(d => new Date(d.date) <= lastDate).length;
+        return { year:y, days, active, trained, recovery, elapsed,
                  pct: elapsed ? Math.round(100*active/elapsed) : 0 };
     });
 
@@ -1153,7 +1174,7 @@ function processData(rows) {
     return { stats, longestStreak, disciplines, instructors,
              disciplineStats, cadenceResistance, speedIncline, hrZones, timeOfDay,
              monthlyHours, partialNote, zoneEvolution, zoneMix, POWER_ZONES,
-             effIndex, byClassType, weeklyLoad, calendar };
+             effIndex, byClassType, weeklyLoad, calendar, calSummary };
 }
 
 
@@ -1558,7 +1579,7 @@ function renderDashboard(data, lastModified) {
     const { stats, longestStreak, disciplines, instructors,
             disciplineStats, cadenceResistance, speedIncline, hrZones, timeOfDay,
             monthlyHours, partialNote, zoneEvolution, zoneMix, POWER_ZONES,
-            effIndex, byClassType, weeklyLoad, calendar } = data;
+            effIndex, byClassType, weeklyLoad, calendar, calSummary } = data;
 
     // The cycling section predates the generic analyzer and reads these names
     // directly; map them across rather than rewriting eight working charts.
@@ -1938,8 +1959,20 @@ function renderDashboard(data, lastModified) {
 
         <div class="chart-container feature">
             <h2>Every Day You Trained</h2>
-            <div class="description">One square per day, shaded by minutes — the darker the square, the longer the session</div>
+            <div class="description">One square per day, shaded by minutes &nbsp;|&nbsp; grey = training, terracotta = recovery only (yoga, stretching or meditation)</div>
             <div id="calendar"></div>
+            <div class="method-note">
+                A streak counts days, which flatters it — a two-hour ride and a ten-minute meditation
+                both just make the square non-empty. Splitting the shading by kind shows the texture
+                underneath: <b>${calSummary.trained} of ${calSummary.active} active days
+                (${calSummary.pctTrained}%) include cycling, running, walking, rowing or strength</b>;
+                the other ${calSummary.recovery} are yoga, stretching or meditation alone.
+                <br><br>
+                That recovery block is not padding — it is roughly one day in seven, and those days
+                run to a median of nearly an hour. Taking real rest from hard training while still
+                showing up is the pattern that makes a streak this long survivable rather than
+                suspicious.
+            </div>
         </div>
 
         <div class="chart-container">
@@ -2757,17 +2790,21 @@ function renderDashboard(data, lastModified) {
     (()=>{
         const host = document.getElementById('calendar');
         if (!host || !calendar.length) return;
-        const shade = mins => {
-            if (!mins) return CAL_COLORS[0];
+        // Same intensity steps either way, so length still reads; the ramp
+        // chosen says whether the day was training or recovery.
+        const shade = (mins, trained) => {
+            const ramp = trained ? CAL_TRAIN : CAL_RECOV;
+            if (!mins) return ramp[0];
             let i = 0; while (i < CAL_STEPS.length && mins > CAL_STEPS[i]) i++;
-            return CAL_COLORS[Math.min(i, CAL_COLORS.length-1)];
+            return ramp[Math.min(i, ramp.length-1)];
         };
         const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
         calendar.forEach(y => {
             const wrap = document.createElement('div');
             wrap.className = 'cal-year';
             wrap.innerHTML = `<div class="cal-head"><span class="y">${y.year}</span>` +
-                `<span class="s">${y.active} active days of ${y.elapsed} elapsed · ${y.pct}%</span></div>`;
+                `<span class="s">${y.active} active of ${y.elapsed} days · ${y.pct}%` +
+                ` &nbsp;·&nbsp; ${y.trained} training, ${y.recovery} recovery-only</span></div>`;
             const grid = document.createElement('div');
             grid.className = 'cal-grid';
             // Pad so the first column starts on the right weekday
@@ -2781,9 +2818,10 @@ function renderDashboard(data, lastModified) {
                 cell.className = 'cal-cell';
                 // A day that has not arrived yet is blank, not a rest day —
                 // otherwise the rest of the year reads as months of nothing.
-                cell.style.background = d.future ? 'transparent' : shade(d.mins);
+                cell.style.background = d.future ? 'transparent' : shade(d.mins, d.trained);
                 cell.title = d.future ? `${d.date} · not yet`
-                           : d.mins ? `${d.date} · ${d.mins} min` : `${d.date} · rest`;
+                           : d.mins ? `${d.date} · ${d.mins} min · ${d.trained ? 'training' : 'recovery only'}`
+                           : `${d.date} · rest`;
                 grid.appendChild(cell);
             });
             wrap.appendChild(grid);
@@ -2791,8 +2829,12 @@ function renderDashboard(data, lastModified) {
         });
         const legend = document.createElement('div');
         legend.className = 'cal-legend';
-        legend.innerHTML = 'Rest' + CAL_COLORS.map(c=>`<i style="background:${c}"></i>`).join('') +
-            `${CAL_STEPS[CAL_STEPS.length-1]}+ min`;
+        const ramp = arr => arr.slice(1).map(c=>`<i style="background:${c}"></i>`).join('');
+        legend.innerHTML =
+            `<span>Training</span>${ramp(CAL_TRAIN)}` +
+            `<span class="gap">Recovery only</span>${ramp(CAL_RECOV)}` +
+            `<span class="gap">Rest</span><i style="background:${CAL_TRAIN[0]}"></i>` +
+            `<span class="gap">shorter → longer session</span>`;
         host.appendChild(legend);
     })();
 
