@@ -8,29 +8,70 @@ permalink: /exercise/
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+(function(){
+  try {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+})();
+</script>
 <title>Peloton Workout Analysis</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 
+:root {
+  --bg:#fff; --bg-alt:#f5f5f5; --bg-soft:#f9f9f9; --bg-soft2:#f7f7f7;
+  --fg:#000; --muted:#666; --faint:#999;
+  --border-strong:#000; --border:#ccc; --border-soft:#ddd; --border-softer:#eee;
+  --accent:#c0392b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:#0d0d0d; --bg-alt:#1a1a1a; --bg-soft:#161616; --bg-soft2:#1c1c1c;
+    --fg:#f0f0f0; --muted:#aaa; --faint:#888;
+    --border-strong:#f0f0f0; --border:#444; --border-soft:#333; --border-softer:#2a2a2a;
+    --accent:#e0574a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg:#0d0d0d; --bg-alt:#1a1a1a; --bg-soft:#161616; --bg-soft2:#1c1c1c;
+  --fg:#f0f0f0; --muted:#aaa; --faint:#888;
+  --border-strong:#f0f0f0; --border:#444; --border-soft:#333; --border-softer:#2a2a2a;
+  --accent:#e0574a;
+}
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
-    background:#fff;
-    color:#000;
+    background:var(--bg);
+    color:var(--fg);
     padding:48px 24px;
     line-height:1.6;
 }
 .container { max-width:1200px; margin:0 auto; }
 
+/* ── Theme toggle ── */
+.theme-toggle {
+  position:fixed; top:20px; right:20px; z-index:100;
+  width:36px; height:36px; border-radius:50%;
+  border:1px solid var(--border); background:var(--bg); color:var(--fg);
+  font-size:16px; line-height:1; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+}
+.theme-toggle:hover { background:var(--bg-alt); }
+
 /* ── Header ── */
-.header { border-bottom:2px solid #000; padding-bottom:28px; margin-bottom:44px; }
+.header { border-bottom:2px solid var(--border-strong); padding-bottom:28px; margin-bottom:44px; }
 .header h1 { font-size:2.4em; font-weight:700; letter-spacing:-.5px; margin-bottom:6px; }
 .header-meta { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; }
-.header .subtitle { font-size:.95em; color:#666; }
-.last-updated { font-size:.78em; color:#999; font-style:italic; }
-.nav-link { font-size:.78em; color:#999; }
-.nav-link a { color:#999; text-decoration:none; }
-.nav-link a:hover { color:#000; text-decoration:underline; }
+.header .subtitle { font-size:.95em; color:var(--muted); }
+.last-updated { font-size:.78em; color:var(--faint); font-style:italic; }
+.nav-link { font-size:.78em; color:var(--faint); }
+.nav-link a { color:var(--faint); text-decoration:none; }
+.nav-link a:hover { color:var(--fg); text-decoration:underline; }
+.nav-link .current { color:var(--muted); font-weight:600; }
 
 /* ── Stat cards ── */
 .stats-grid {
@@ -39,55 +80,55 @@ body {
     gap:14px;
     margin-bottom:48px;
 }
-.stat-card { border:2px solid #000; padding:22px 14px; text-align:center; transition:background .15s; }
-.stat-card:hover { background:#f5f5f5; }
+.stat-card { border:2px solid var(--border-strong); padding:22px 14px; text-align:center; transition:background .15s; }
+.stat-card:hover { background:var(--bg-alt); }
 .stat-card .value { font-size:2em; font-weight:700; margin-bottom:5px; font-variant-numeric:tabular-nums; line-height:1.1; }
-.stat-card .label { font-size:.75em; text-transform:uppercase; letter-spacing:1.1px; color:#666; }
-.stat-card.accent { border-color:#c0392b; }
-.stat-card.accent .value { color:#c0392b; }
+.stat-card .label { font-size:.75em; text-transform:uppercase; letter-spacing:1.1px; color:var(--muted); }
+.stat-card.accent { border-color:var(--accent); }
+.stat-card.accent .value { color:var(--accent); }
 
 /* ── Section dividers ── */
-.section-head { margin:56px 0 24px; padding-bottom:10px; border-bottom:2px solid #000; }
+.section-head { margin:56px 0 24px; padding-bottom:10px; border-bottom:2px solid var(--border-strong); }
 .section-head:first-of-type { margin-top:0; }
 .section-head h2 { font-size:1.35em; font-weight:700; letter-spacing:-.3px; }
-.section-head p { font-size:.85em; color:#666; margin-top:3px; }
+.section-head p { font-size:.85em; color:var(--muted); margin-top:3px; }
 
 /* ── Discipline tabs ── */
-.tabs { display:flex; flex-wrap:wrap; gap:0; margin:0 0 24px; border-bottom:2px solid #000; }
+.tabs { display:flex; flex-wrap:wrap; gap:0; margin:0 0 24px; border-bottom:2px solid var(--border-strong); }
 .tabs button {
     font:inherit; font-size:.9em; font-weight:600; letter-spacing:.2px;
     background:none; border:0; border-bottom:3px solid transparent;
-    padding:10px 18px; margin-bottom:-2px; cursor:pointer; color:#888;
+    padding:10px 18px; margin-bottom:-2px; cursor:pointer; color:var(--faint);
     transition:color .15s, border-color .15s;
 }
-.tabs button:hover { color:#000; }
-.tabs button[aria-selected="true"] { color:#000; border-bottom-color:#c0392b; }
-.tabs button .n { font-weight:400; color:#aaa; font-size:.85em; margin-left:6px; }
-.tabs button[aria-selected="true"] .n { color:#c0392b; }
+.tabs button:hover { color:var(--fg); }
+.tabs button[aria-selected="true"] { color:var(--fg); border-bottom-color:var(--accent); }
+.tabs button .n { font-weight:400; color:var(--faint); font-size:.85em; margin-left:6px; }
+.tabs button[aria-selected="true"] .n { color:var(--accent); }
 .tab-panel[hidden] { display:none; }
 /* The active tab already names the discipline, so the panel only needs its
    numbers — not a second heading repeating the label. */
-.panel-meta { font-size:.85em; color:#666; margin:-6px 0 22px; }
+.panel-meta { font-size:.85em; color:var(--muted); margin:-6px 0 22px; }
 
 /* ── Consistency calendar ── */
 .cal-year { margin-bottom:18px; }
 .cal-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; }
 .cal-head .y { font-weight:700; font-size:.95em; }
-.cal-head .s { font-size:.78em; color:#666; }
+.cal-head .s { font-size:.78em; color:var(--muted); }
 .cal-grid { display:grid; grid-auto-flow:column; grid-template-rows:repeat(7,1fr);
             gap:2px; overflow-x:auto; padding-bottom:4px; }
-.cal-cell { width:11px; height:11px; border-radius:2px; background:#f0f0f0; }
+.cal-cell { width:11px; height:11px; border-radius:2px; background:var(--border-softer); }
 .cal-legend { display:flex; align-items:center; gap:4px; flex-wrap:wrap;
-               font-size:.72em; color:#888; margin-top:10px; }
+               font-size:.72em; color:var(--faint); margin-top:10px; }
 .cal-legend .gap { margin-left:14px; }
 .cal-legend i { width:11px; height:11px; border-radius:2px; display:inline-block; }
 @media(max-width:600px){ .cal-cell, .cal-legend i { width:8px; height:8px; } }
 
 /* ── Chart containers ── */
-.chart-container { border:1px solid #ccc; padding:24px; margin-bottom:28px; background:#fff; }
+.chart-container { border:1px solid var(--border); padding:24px; margin-bottom:28px; background:var(--bg); }
 .chart-container h2 { font-size:1.15em; font-weight:600; margin-bottom:5px; letter-spacing:-.2px; }
-.chart-container .description { color:#666; font-size:.82em; margin-bottom:16px; }
-.chart-container.feature { border:2px solid #000; }
+.chart-container .description { color:var(--muted); font-size:.82em; margin-bottom:16px; }
+.chart-container.feature { border:2px solid var(--border-strong); }
 .two-col { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
 .three-col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:24px; }
 
@@ -95,10 +136,10 @@ canvas { max-height:400px; max-width:100%; }
 
 /* ── Insight box ── */
 .insight-box {
-    border-left:3px solid #000;
+    border-left:3px solid var(--border-strong);
     padding:16px 20px;
     margin:0 0 40px;
-    background:#f9f9f9;
+    background:var(--bg-soft);
     font-size:.9em;
     line-height:1.75;
 }
@@ -107,21 +148,21 @@ canvas { max-height:400px; max-width:100%; }
 /* ── Method note (explains a chart's filtering choices) ── */
 .method-note {
     margin-top:14px; padding:10px 14px;
-    background:#f7f7f7; border-left:2px solid #999;
-    font-size:.76em; color:#555; line-height:1.6;
+    background:var(--bg-soft2); border-left:2px solid var(--faint);
+    font-size:.76em; color:var(--muted); line-height:1.6;
 }
-.method-note b { color:#000; }
+.method-note b { color:var(--fg); }
 
 /* ── Takeaway strip under a feature chart ── */
 .takeaway {
     display:flex; flex-wrap:wrap; gap:0; margin-top:18px;
-    border-top:1px solid #ddd; padding-top:14px;
+    border-top:1px solid var(--border-soft); padding-top:14px;
 }
-.takeaway div { flex:1 1 130px; padding:0 14px; border-left:1px solid #eee; }
+.takeaway div { flex:1 1 130px; padding:0 14px; border-left:1px solid var(--border-softer); }
 .takeaway div:first-child { border-left:0; padding-left:0; }
-.takeaway .k { font-size:.68em; text-transform:uppercase; letter-spacing:1px; color:#888; }
+.takeaway .k { font-size:.68em; text-transform:uppercase; letter-spacing:1px; color:var(--faint); }
 .takeaway .v { font-size:1.25em; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.3; }
-.takeaway .v.up { color:#c0392b; }
+.takeaway .v.up { color:var(--accent); }
 
 /* ── State screens ── */
 .state-screen {
@@ -130,23 +171,28 @@ canvas { max-height:400px; max-width:100%; }
 }
 .state-screen .icon { font-size:3em; }
 .state-screen h2 { font-size:1.4em; font-weight:600; }
-.state-screen p { color:#666; font-size:.95em; max-width:480px; line-height:1.6; }
+.state-screen p { color:var(--muted); font-size:.95em; max-width:480px; line-height:1.6; }
 .state-screen code {
-    background:#f3f3f3; border:1px solid #ddd;
-    padding:12px 20px; font-family:monospace; font-size:.9em; color:#333;
+    background:var(--bg-soft); border:1px solid var(--border-soft);
+    padding:12px 20px; font-family:monospace; font-size:.9em; color:var(--fg);
     display:block; margin-top:4px;
 }
-.error-detail { color:#c0392b; font-size:.85em; font-family:monospace; }
+.error-detail { color:var(--accent); font-size:.85em; font-family:monospace; }
 .spinner {
     width:40px; height:40px;
-    border:3px solid #eee; border-top-color:#000;
+    border:3px solid var(--border-softer); border-top-color:var(--fg);
     border-radius:50%;
     animation:spin .8s linear infinite;
 }
 @keyframes spin { to { transform:rotate(360deg); } }
 
 /* ── Footer ── */
-.footer { text-align:center; margin-top:48px; padding-top:24px; border-top:1px solid #ccc; color:#999; font-size:.82em; }
+.footer { text-align:center; margin-top:48px; padding-top:24px; border-top:1px solid var(--border); color:var(--faint); font-size:.82em; }
+.footer .social-row {
+    display:flex; justify-content:center; flex-wrap:wrap;
+    gap:8px 20px; margin-bottom:12px; font-size:1.05em;
+}
+.footer .social-row a { color:var(--muted); }
 
 /* ── Tablet ── */
 @media(max-width:900px){
@@ -172,10 +218,30 @@ canvas { max-height:400px; max-width:100%; }
     .section-head h2 { font-size:1.15em; }
     .tabs { flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; }
     .tabs button { padding:9px 13px; font-size:.82em; white-space:nowrap; }
+    .theme-toggle { top:12px; right:12px; width:32px; height:32px; }
 }
 </style>
 </head>
 <body>
+<button id="theme-toggle" class="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">🌙</button>
+<script>
+(function () {
+  // Deliberately independent of the Chart.js-dependent script below: the
+  // toggle itself must keep working even if that CDN script fails to load.
+  var btn = document.getElementById('theme-toggle');
+  function render() {
+    btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
+  }
+  btn.addEventListener('click', function () {
+    var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('theme', next); } catch (e) {}
+    render();
+    document.dispatchEvent(new CustomEvent('themechange'));
+  });
+  render();
+})();
+</script>
 <div class="container" id="app"></div>
 
 <script>
@@ -324,6 +390,11 @@ const ACWR_MIN_CHRONIC_HOURS = 2;
 const CAL_STEPS  = [0, 30, 60, 90, 120];
 const CAL_TRAIN  = ['#f0f0f0','#c8c8c8','#8f8f8f','#5a5a5a','#2b2b2b','#000000'];
 const CAL_RECOV  = ['#f0f0f0','#f3ded9','#e4b5ab','#d28b7c','#c0654f','#a8452f'];
+// Dark-mode ramps invert lightness rather than reusing the light ones: an
+// empty day needs to sit near the dark background, not be the brightest
+// thing on the page, so "more training" still reads as "more intense".
+const CAL_TRAIN_DARK = ['#242424','#454545','#6b6b6b','#969696','#c8c8c8','#f5f5f5'];
+const CAL_RECOV_DARK = ['#242424','#3d2c26','#63392c','#8f4a34','#c06340','#e08653'];
 // What counts as training rather than recovery.
 const TRAINING_DISCIPLINES = ['Cycling','Running','Walking','Rowing','Strength','Cardio'];
 const MIN_PER_LENGTH  = 5;  // duration-split series: needs more, since it splits four ways
@@ -331,13 +402,48 @@ const MIN_PER_LENGTH  = 5;  // duration-split series: needs more, since it split
 // ─────────────────────────────────────────────────────────────
 //  PALETTE
 // ─────────────────────────────────────────────────────────────
-const C = { black:'#000', dark:'#333', mid:'#666', light:'#999', vlight:'#ccc', red:'#c0392b' };
+const PALETTE = {
+    light: { black:'#000', dark:'#333', mid:'#666', light:'#999', vlight:'#ccc', red:'#c0392b', gridLine:'#e8e8e8', chartGrid:'rgba(0,0,0,0.06)' },
+    dark:  { black:'#f0f0f0', dark:'#ccc', mid:'#aaa', light:'#888', vlight:'#444', red:'#e0574a', gridLine:'#333', chartGrid:'rgba(255,255,255,0.08)' }
+};
+const C = { ...PALETTE.light };
 const grays = ['#1a1a1a','#2e2e2e','#424242','#575757','#6b6b6b','#808080','#949494','#a8a8a8','#bcbcbc'];
 const vivid  = ['#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#34495e','#e91e63'];
 
 Chart.defaults.font.family = 'inherit';
-Chart.defaults.color       = C.mid;
-Chart.defaults.borderColor = '#e8e8e8';
+
+// ─────────────────────────────────────────────────────────────
+//  THEME (light/dark) — mutates C for charts built after a toggle,
+//  and retroactively recolors already-built ones via the registry.
+// ─────────────────────────────────────────────────────────────
+const chartRegistry = [];
+Chart.register({
+    id: 'themeTracker',
+    afterInit(chart) { chartRegistry.push(chart); }
+});
+function applyChartTheme() {
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+    Object.assign(C, dark ? PALETTE.dark : PALETTE.light);
+    Chart.defaults.color       = C.mid;
+    Chart.defaults.borderColor = C.gridLine;
+    chartRegistry.forEach(chart => {
+        ['x', 'y'].forEach(k => {
+            const sc = chart.options.scales && chart.options.scales[k];
+            if (!sc) return;
+            if (sc.ticks) sc.ticks.color = C.mid;
+            if (sc.grid && sc.grid.color !== undefined) sc.grid.color = C.chartGrid;
+        });
+        chart.update('none');
+    });
+}
+applyChartTheme();
+// The toggle button's own click handling lives in the independent script
+// right after it in <body>, so it keeps working even if this Chart.js-
+// dependent script never runs. This just recolors charts and the calendar.
+document.addEventListener('themechange', function () {
+    applyChartTheme();
+    if (window.__repaintCalendar) window.__repaintCalendar();
+});
 
 // ─────────────────────────────────────────────────────────────
 //  STATE SCREENS
@@ -1613,7 +1719,10 @@ function renderDashboard(data, lastModified) {
             <div class="header-meta">
                 <span class="subtitle">${stats.totalWorkouts.toLocaleString()} workouts &nbsp;|&nbsp; ${stats.firstDate} – ${stats.lastDate}</span>
                 ${luStr ? `<span class="last-updated">Data last updated: ${luStr}</span>` : ''}
-                <span class="nav-link"><a href="/">Home</a> &middot; <a href="/cv/">CV</a> &middot; <a href="/blog/">Blog</a> &middot; <a href="/music/">Music</a></span>
+                <span class="nav-link">
+                    <a href="/">Home</a> &middot; <a href="/cv/">CV</a> &middot; <a href="/blog/">Blog</a> &middot;
+                    <span class="current">Exercise</span> &middot; <a href="/music/">Music</a>
+                </span>
             </div>
         </div>
 
@@ -1985,7 +2094,17 @@ function renderDashboard(data, lastModified) {
             <canvas id="instructorChart"></canvas>
         </div>
 
-        <div class="footer">Chart.js &nbsp;|&nbsp; ${luStr ? 'Data last updated: ' + luStr : 'kambiz.github.io'}</div>
+        <div class="footer">
+            ${luStr ? `<div style="margin-bottom:10px;">Data last updated: ${luStr}</div>` : ''}
+            <div class="social-row">
+                <a href="https://github.com/kambiz">GitHub</a>
+                <a href="https://www.twitter.com/kambiz">Twitter</a>
+                <a href="https://www.linkedin.com/in/kambiz">LinkedIn</a>
+                <a href="https://www.last.fm/user/kambizkamrani">Last.fm</a>
+                <a href="https://www.strava.com/athletes/kambizkamrani">Strava</a>
+            </div>
+            <div>Kambiz Kamrani &middot; kambiz.github.io</div>
+        </div>
     `;
 
     // ── Stat cards ─────────────────────────────────────────────
@@ -2797,7 +2916,8 @@ function renderDashboard(data, lastModified) {
         // Same intensity steps either way, so length still reads; the ramp
         // chosen says whether the day was training or recovery.
         const shade = (mins, trained) => {
-            const ramp = trained ? CAL_TRAIN : CAL_RECOV;
+            const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+            const ramp = trained ? (dark ? CAL_TRAIN_DARK : CAL_TRAIN) : (dark ? CAL_RECOV_DARK : CAL_RECOV);
             if (!mins) return ramp[0];
             let i = 0; while (i < CAL_STEPS.length && mins > CAL_STEPS[i]) i++;
             return ramp[Math.min(i, ramp.length-1)];
@@ -2826,6 +2946,8 @@ function renderDashboard(data, lastModified) {
                 cell.title = d.future ? `${d.date} · not yet`
                            : d.mins ? `${d.date} · ${d.mins} min · ${d.trained ? 'training' : 'recovery only'}`
                            : `${d.date} · rest`;
+                // Re-read on a theme toggle so already-drawn cells recolor.
+                if (!d.future) { cell.dataset.mins = d.mins || 0; cell.dataset.trained = d.trained ? '1' : '0'; }
                 grid.appendChild(cell);
             });
             wrap.appendChild(grid);
@@ -2833,12 +2955,26 @@ function renderDashboard(data, lastModified) {
         });
         const legend = document.createElement('div');
         legend.className = 'cal-legend';
-        const ramp = arr => arr.slice(1).map(c=>`<i style="background:${c}"></i>`).join('');
-        legend.innerHTML =
-            `<span>Training</span>${ramp(CAL_TRAIN)}` +
-            `<span class="gap">Recovery only</span>${ramp(CAL_RECOV)}` +
-            `<span class="gap">Rest</span><i style="background:${CAL_TRAIN[0]}"></i>` +
-            `<span class="gap">shorter → longer session</span>`;
+        function paintLegend() {
+            const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+            const TRAIN = dark ? CAL_TRAIN_DARK : CAL_TRAIN;
+            const RECOV = dark ? CAL_RECOV_DARK : CAL_RECOV;
+            const ramp = arr => arr.slice(1).map(c=>`<i style="background:${c}"></i>`).join('');
+            legend.innerHTML =
+                `<span>Training</span>${ramp(TRAIN)}` +
+                `<span class="gap">Recovery only</span>${ramp(RECOV)}` +
+                `<span class="gap">Rest</span><i style="background:${TRAIN[0]}"></i>` +
+                `<span class="gap">shorter → longer session</span>`;
+        }
+        paintLegend();
+        // Escape hatch for the theme toggle (defined far outside this IIFE)
+        // to recolor already-drawn cells and legend swatches on flip.
+        window.__repaintCalendar = function () {
+            host.querySelectorAll('.cal-cell[data-mins]').forEach(cell => {
+                cell.style.background = shade(+cell.dataset.mins, cell.dataset.trained === '1');
+            });
+            paintLegend();
+        };
         host.appendChild(legend);
     })();
 
@@ -2859,6 +2995,10 @@ function renderDashboard(data, lastModified) {
             }
         }
     });
+
+    // Corrects any grid line drawn with a literal (non-theme-aware) color
+    // above, in case the page loaded straight into dark mode.
+    applyChartTheme();
 }
 
 // ─────────────────────────────────────────────────────────────

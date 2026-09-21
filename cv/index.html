@@ -8,59 +8,100 @@ permalink: /cv/
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+(function(){
+  try {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+})();
+</script>
 <title>Curriculum Vitae — Kambiz Kamrani, MD</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 
+:root {
+  --bg:#fff; --bg-alt:#f5f5f5; --bg-soft:#f9f9f9;
+  --fg:#000; --muted:#666; --faint:#999;
+  --border-strong:#000; --border:#ccc; --border-soft:#eee; --border-softer:#f0f0f0;
+  --accent:#c0392b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:#0d0d0d; --bg-alt:#1a1a1a; --bg-soft:#161616;
+    --fg:#f0f0f0; --muted:#aaa; --faint:#888;
+    --border-strong:#f0f0f0; --border:#444; --border-soft:#2a2a2a; --border-softer:#242424;
+    --accent:#e0574a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg:#0d0d0d; --bg-alt:#1a1a1a; --bg-soft:#161616;
+  --fg:#f0f0f0; --muted:#aaa; --faint:#888;
+  --border-strong:#f0f0f0; --border:#444; --border-soft:#2a2a2a; --border-softer:#242424;
+  --accent:#e0574a;
+}
+
 body {
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Arial,sans-serif;
-  background:#fff; color:#000; padding:48px 24px; line-height:1.6;
+  background:var(--bg); color:var(--fg); padding:48px 24px; line-height:1.6;
 }
-a { color:#000; text-underline-offset:2px; }
+a { color:var(--fg); text-underline-offset:2px; }
 a:hover { opacity:.6; }
 .container { max-width:960px; margin:0 auto; }
 
+/* ── Theme toggle ── */
+.theme-toggle {
+  position:fixed; top:20px; right:20px; z-index:100;
+  width:36px; height:36px; border-radius:50%;
+  border:1px solid var(--border); background:var(--bg); color:var(--fg);
+  font-size:16px; line-height:1; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+}
+.theme-toggle:hover { background:var(--bg-alt); }
+
 /* ── Header ── */
-.header { border-bottom:2px solid #000; padding-bottom:28px; margin-bottom:44px; }
+.header { border-bottom:2px solid var(--border-strong); padding-bottom:28px; margin-bottom:44px; }
 .header h1 { font-size:2.4em; font-weight:700; letter-spacing:-.5px; margin-bottom:6px; }
 .header-meta { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; }
-.header .subtitle { font-size:.95em; color:#666; }
-.header .nav-link { font-size:.78em; color:#999; }
-.header .nav-link a { color:#999; }
+.header .subtitle { font-size:.95em; color:var(--muted); }
+.header .nav-link { font-size:.78em; color:var(--faint); }
+.header .nav-link a { color:var(--faint); }
+.header .nav-link .current { color:var(--muted); font-weight:600; }
 
 /* ── Stat cards ── */
 .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:48px; }
-.stat-card { border:2px solid #000; padding:22px 14px; text-align:center; transition:background .15s; }
-.stat-card:hover { background:#f5f5f5; }
+.stat-card { border:2px solid var(--border-strong); padding:22px 14px; text-align:center; transition:background .15s; }
+.stat-card:hover { background:var(--bg-alt); }
 .stat-card .value { font-size:2em; font-weight:700; margin-bottom:5px; font-variant-numeric:tabular-nums; line-height:1.1; }
-.stat-card .label { font-size:.75em; text-transform:uppercase; letter-spacing:1.1px; color:#666; }
-.stat-card.accent { border-color:#c0392b; }
-.stat-card.accent .value { color:#c0392b; }
+.stat-card .label { font-size:.75em; text-transform:uppercase; letter-spacing:1.1px; color:var(--muted); }
+.stat-card.accent { border-color:var(--accent); }
+.stat-card.accent .value { color:var(--accent); }
 
 /* ── Section heads ── */
-.section-head { margin:56px 0 24px; padding-bottom:10px; border-bottom:2px solid #000; }
+.section-head { margin:56px 0 24px; padding-bottom:10px; border-bottom:2px solid var(--border-strong); }
 .section-head:first-of-type { margin-top:0; }
 .section-head h2 { font-size:1.35em; font-weight:700; letter-spacing:-.3px; }
-.section-head p { font-size:.85em; color:#666; margin-top:3px; }
+.section-head p { font-size:.85em; color:var(--muted); margin-top:3px; }
 
 /* ── Chart containers ── */
-.chart-container { border:1px solid #ccc; padding:24px; margin-bottom:28px; background:#fff; }
-.chart-container.feature { border:2px solid #000; }
+.chart-container { border:1px solid var(--border); padding:24px; margin-bottom:28px; background:var(--bg); }
+.chart-container.feature { border:2px solid var(--border-strong); }
 .chart-wrap { position:relative; }
 canvas { max-width:100%; display:block; }
 
 /* ── Takeaway strip ── */
-.takeaway { display:flex; flex-wrap:wrap; gap:0; margin-top:18px; border-top:1px solid #ddd; padding-top:14px; }
-.takeaway div { flex:1 1 130px; padding:0 14px; border-left:1px solid #eee; }
+.takeaway { display:flex; flex-wrap:wrap; gap:0; margin-top:18px; border-top:1px solid var(--border-soft); padding-top:14px; }
+.takeaway div { flex:1 1 130px; padding:0 14px; border-left:1px solid var(--border-soft); }
 .takeaway div:first-child { border-left:0; padding-left:0; }
-.takeaway .k { font-size:.68em; text-transform:uppercase; letter-spacing:1px; color:#888; display:block; }
+.takeaway .k { font-size:.68em; text-transform:uppercase; letter-spacing:1px; color:var(--faint); display:block; }
 .takeaway .v { font-size:1.25em; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.3; }
 
 /* ── Insight box ── */
 .insight-box {
-  border-left:3px solid #000; padding:14px 20px;
-  margin:0 0 36px; background:#f9f9f9;
+  border-left:3px solid var(--border-strong); padding:14px 20px;
+  margin:0 0 36px; background:var(--bg-soft);
   font-size:.88em; line-height:1.75;
 }
 .insight-box strong { font-weight:700; }
@@ -69,36 +110,41 @@ canvas { max-width:100%; display:block; }
 .sub-head {
   font-size:.78em; font-weight:700; text-transform:uppercase;
   letter-spacing:.09em; margin:28px 0 10px;
-  padding-bottom:6px; border-bottom:1px solid #ccc;
+  padding-bottom:6px; border-bottom:1px solid var(--border);
 }
 
 /* ── Publication list ── */
 .pub-list { list-style:none; margin:0 0 28px; }
-.pub-list li { padding:11px 0; border-bottom:1px solid #eee; font-size:.88em; line-height:1.55; }
+.pub-list li { padding:11px 0; border-bottom:1px solid var(--border-soft); font-size:.88em; line-height:1.55; }
 .pub-list li:last-child { border-bottom:0; }
-.pub-meta { display:block; color:#666; font-size:.9em; margin-top:3px; }
+.pub-meta { display:block; color:var(--muted); font-size:.9em; margin-top:3px; }
 
 /* ── Compact list (case reports, abstracts) ── */
 .compact-list { list-style:none; margin:0 0 28px; }
-.compact-list li { padding:5px 0; border-bottom:1px solid #f0f0f0; font-size:.82em; color:#444; line-height:1.45; }
+.compact-list li { padding:5px 0; border-bottom:1px solid var(--border-softer); font-size:.82em; color:var(--muted); line-height:1.45; }
 .compact-list li:last-child { border-bottom:0; }
-.compact-list a { color:#333; }
-.compact-list .year { color:#888; font-size:.93em; }
+.compact-list a { color:var(--fg); }
+.compact-list .year { color:var(--faint); font-size:.93em; }
 
 /* ── Service entries ── */
 .entry { margin-bottom:20px; }
 .entry strong { font-size:.93em; display:block; }
-.entry .meta { font-size:.8em; color:#888; }
-.entry .note { font-size:.83em; color:#555; margin-top:3px; line-height:1.5; }
+.entry .meta { font-size:.8em; color:var(--faint); }
+.entry .note { font-size:.83em; color:var(--muted); margin-top:3px; line-height:1.5; }
 
 /* ── Legend row ── */
-.chart-legend { display:flex; gap:20px; flex-wrap:wrap; margin-top:14px; font-size:.78em; color:#555; }
+.chart-legend { display:flex; gap:20px; flex-wrap:wrap; margin-top:14px; font-size:.78em; color:var(--muted); }
 .chart-legend span { display:flex; align-items:center; gap:6px; }
 .chart-legend .dot { width:11px; height:11px; border-radius:50%; display:inline-block; }
 .chart-legend .tri { width:0; height:0; border-left:7px solid transparent; border-right:7px solid transparent; border-bottom:12px solid; display:inline-block; }
 
 /* ── Footer ── */
-.footer { text-align:center; margin-top:56px; padding-top:24px; border-top:1px solid #ccc; color:#999; font-size:.82em; }
+.footer { text-align:center; margin-top:56px; padding-top:24px; border-top:1px solid var(--border); color:var(--faint); font-size:.82em; }
+.footer .social-row {
+  display:flex; justify-content:center; flex-wrap:wrap;
+  gap:8px 20px; margin-bottom:12px; font-size:1.05em;
+}
+.footer .social-row a { color:var(--muted); }
 
 /* ── Responsive ── */
 @media(max-width:700px){
@@ -109,10 +155,30 @@ canvas { max-width:100%; display:block; }
   .stat-card .value { font-size:1.5em; }
   .takeaway div { flex:1 1 50%; border-left:0; padding:5px 0; }
   .section-head { margin:36px 0 18px; }
+  .theme-toggle { top:12px; right:12px; width:32px; height:32px; }
 }
 </style>
 </head>
 <body>
+<button id="theme-toggle" class="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">🌙</button>
+<script>
+(function () {
+  // Deliberately independent of the Chart.js-dependent script below: the
+  // toggle itself must keep working even if that CDN script fails to load.
+  var btn = document.getElementById('theme-toggle');
+  function render() {
+    btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
+  }
+  btn.addEventListener('click', function () {
+    var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('theme', next); } catch (e) {}
+    render();
+    document.dispatchEvent(new CustomEvent('themechange'));
+  });
+  render();
+})();
+</script>
 <div class="container">
 
 <!-- ── Header ────────────────────────────────────────────────── -->
@@ -120,7 +186,10 @@ canvas { max-width:100%; display:block; }
   <h1>Kambiz Kamrani, MD</h1>
   <div class="header-meta">
     <span class="subtitle">Acute Care Surgeon &middot; Banner Medical Group &middot; Greater Phoenix, AZ</span>
-    <span class="nav-link"><a href="/">Home</a> &middot; <a href="/blog/">Blog</a> &middot; <a href="/exercise/">Exercise</a> &middot; <a href="/music/">Music</a></span>
+    <span class="nav-link">
+      <a href="/">Home</a> &middot; <span class="current">CV</span> &middot; <a href="/blog/">Blog</a> &middot;
+      <a href="/exercise/">Exercise</a> &middot; <a href="/music/">Music</a>
+    </span>
   </div>
 </div>
 
@@ -275,25 +344,56 @@ canvas { max-width:100%; display:block; }
 <div class="section-head">
   <h2>Personal Interests</h2>
 </div>
-<p style="font-size:.9em; color:#555; margin-bottom:48px;">
+<p style="font-size:.9em; color:var(--muted); margin-bottom:48px;">
   Hiking, backpacking, cycling, swimming, skiing, kayaking, illustration, photography, watercolor, sculpting.
 </p>
 
 <!-- ── Footer ─────────────────────────────────────────────────── -->
-<div class="footer">Kambiz Kamrani, MD &middot; <a href="/">kambiz.github.io</a></div>
+<div class="footer">
+  <div class="social-row">
+    <a href="https://github.com/kambiz">GitHub</a>
+    <a href="https://www.twitter.com/kambiz">Twitter</a>
+    <a href="https://www.linkedin.com/in/kambiz">LinkedIn</a>
+    <a href="https://www.last.fm/user/kambizkamrani">Last.fm</a>
+    <a href="https://www.strava.com/athletes/kambizkamrani">Strava</a>
+  </div>
+  <div>Kambiz Kamrani &middot; kambiz.github.io</div>
+</div>
 
 </div><!-- /container -->
 
 <script>
+{% raw %}
 'use strict';
 (function () {
 
   const NOW = 2026 + 8 / 12; // Sep 2026
 
+  /* ─── Theme-aware chart colors ──────────────────────────────── */
+  const chartRegistry = [];
+  Chart.register({
+    id: 'themeTracker',
+    afterInit(chart) { chartRegistry.push(chart); }
+  });
+  function applyChartTheme() {
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const tick = dark ? '#aaa' : '#666';
+    const grid = dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+    Chart.defaults.color = tick;
+    chartRegistry.forEach(chart => {
+      ['x', 'y'].forEach(k => {
+        const sc = chart.options.scales && chart.options.scales[k];
+        if (!sc) return;
+        if (sc.ticks) sc.ticks.color = tick;
+        if (sc.grid && sc.grid.color !== undefined) sc.grid.color = grid;
+      });
+      chart.update('none');
+    });
+  }
+
   /* ─── Shared chart defaults ─────────────────────────────────── */
   Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif";
   Chart.defaults.font.size   = 11;
-  Chart.defaults.color       = '#555';
 
   /* ─── Career Timeline (Gantt) ───────────────────────────────── */
   const careerCtx = document.getElementById('career-chart');
@@ -344,14 +444,13 @@ canvas { max-width:100%; display:block; }
               stepSize: 2,
               callback: v => Number.isInteger(v) ? v : '',
               maxRotation: 0,
-              color: '#888',
             },
             grid: { color: 'rgba(0,0,0,0.06)' },
             border: { display: false },
           },
           y: {
             grid: { display: false },
-            ticks: { color: '#444', font: { size: 11, weight: '600' } },
+            ticks: { font: { size: 11, weight: '600' } },
             border: { display: false },
           }
         },
@@ -421,7 +520,6 @@ canvas { max-width:100%; display:block; }
             ticks: {
               stepSize: 1,
               callback: v => Number.isInteger(v) ? v : '',
-              color: '#888',
             },
             grid: { color: 'rgba(0,0,0,0.06)' },
             border: { display: false },
@@ -431,7 +529,6 @@ canvas { max-width:100%; display:block; }
             ticks: {
               stepSize: 1,
               callback: v => ({ 0: 'Abstracts', 1: 'Case Reports', 2: 'Peer-Reviewed' }[v] ?? ''),
-              color: '#555',
               font: { weight: '600' },
             },
             grid: { color: 'rgba(0,0,0,0.06)' },
@@ -451,7 +548,14 @@ canvas { max-width:100%; display:block; }
     });
   }
 
+  applyChartTheme();
+  // The toggle button's own click handling lives in the independent script
+  // right after it in <body>, so it keeps working even if this Chart.js-
+  // dependent script never runs. This just recolors the charts on flip.
+  document.addEventListener('themechange', applyChartTheme);
+
 })();
+{% endraw %}
 </script>
 </body>
 </html>
