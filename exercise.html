@@ -18,7 +18,7 @@ permalink: /exercise/
 })();
 </script>
 <title>Peloton Workout Analysis</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/assets/js/chart-4.4.0.umd.js"></script>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 
@@ -227,7 +227,7 @@ canvas { max-height:400px; max-width:100%; }
 <script>
 (function () {
   // Deliberately independent of the Chart.js-dependent script below: the
-  // toggle itself must keep working even if that CDN script fails to load.
+  // toggle itself must keep working even if Chart.js fails to load.
   var btn = document.getElementById('theme-toggle');
   function render() {
     btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
