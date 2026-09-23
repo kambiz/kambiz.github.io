@@ -13,6 +13,17 @@ plugins:
 
 permalink: pretty
 
+# Posts are the only pages with a layout: drop a Markdown file in _posts/
+# (YYYY-MM-DD-slug.md, with a title in its front matter) and it's styled,
+# listed on /blog/, and the Blog link appears in the nav.
+defaults:
+  - scope:
+      path: ""
+      type: posts
+    values:
+      layout: post
+      permalink: /blog/:year/:title/
+
 exclude:
   - Gemfile
   - Gemfile.lock

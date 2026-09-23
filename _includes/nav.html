@@ -1,5 +1,9 @@
+{%- assign nav_items = site.data.nav -%}
+{%- if site.posts.size == 0 -%}
+{%- assign nav_items = site.data.nav | where_exp: "item", "item.needs_posts != true" -%}
+{%- endif -%}
 <span class="nav-link">
-{%- for item in site.data.nav -%}
+{%- for item in nav_items -%}
 {%- unless forloop.first %} &middot; {% endunless -%}
 {%- if item.title == include.current -%}<span class="current">{{ item.title }}</span>
 {%- else -%}<a href="{{ item.url }}">{{ item.title }}</a>{%- endif -%}
