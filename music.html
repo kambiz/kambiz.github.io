@@ -51,6 +51,8 @@ body {
     line-height:1.6;
 }
 .container { max-width:1200px; margin:0 auto; }
+/* Inline links take their surrounding text colour rather than browser blue. */
+a { color:inherit; text-underline-offset:2px; }
 
 /* ── Theme toggle ── */
 .theme-toggle {
@@ -327,7 +329,8 @@ const PALETTE = {
     light: { black:'#000', dark:'#333', mid:'#666', light:'#999', vlight:'#ccc', red:'#c0392b', gridLine:'#eee' },
     dark:  { black:'#f0f0f0', dark:'#ccc', mid:'#aaa', light:'#888', vlight:'#444', red:'#e0574a', gridLine:'#2a2a2a' }
 };
-const C = { ...PALETTE.light };
+// Every chart is built from the light design; the theme code below maps it.
+const C = PALETTE.light;
 // Ordered so adjacent series stay separable in greyscale as well as colour.
 const SERIES = ['#000000','#c0392b','#2c6e8f','#7a7a7a','#8e6d3f','#4a7c59','#8e5572','#b5893c'];
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -340,30 +343,80 @@ const CAL_COLORS = ['#f0f0f0','#d8d8d8','#a8a8a8','#6e6e6e','#333333','#000000']
 const CAL_COLORS_DARK = ['#242424','#454545','#6b6b6b','#969696','#c8c8c8','#f5f5f5'];
 
 // ─────────────────────────────────────────────────────────────
-//  THEME (light/dark) — mutates C for anything built after a toggle,
-//  and retroactively recolors already-built charts via the registry.
+//  THEME (light/dark)
+//  Greys carry this design's ink: black series, grey ramps, hairlines.
+//  In dark mode a grey's lightness is mapped from the light page's range
+//  (white page → black ink) onto the dark page's (#0d0d0d → #f0f0f0), so
+//  every grey keeps its contrast against the page — a black series turns
+//  near-white instead of vanishing, and a faint grey stays faint instead of
+//  becoming the brightest thing on screen. Saturated colours pass through,
+//  except the accent, which follows the CSS. Charts are captured in their
+//  light form once, so toggling back restores them exactly.
 // ─────────────────────────────────────────────────────────────
+const isDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
+function toDark(c) {
+    if (typeof c !== 'string') return c;
+    if (c.toLowerCase() === PALETTE.light.red) return PALETTE.dark.red;
+    let r, g, b, a = null, m;
+    if ((m = c.match(/^#([0-9a-f]{3})$/i))) [r, g, b] = [...m[1]].map(h => parseInt(h + h, 16));
+    else if ((m = c.match(/^#([0-9a-f]{6})$/i))) [r, g, b] = [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16));
+    else if ((m = c.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/))) {
+        [r, g, b] = [m[1], m[2], m[3]].map(Number);
+        if (m[4] !== undefined) a = m[4];
+    } else return c;
+    if (r !== g || g !== b) return c;
+    const l = Math.round(13 + (255 - r) * 227 / 255);
+    return a === null ? `rgb(${l},${l},${l})` : `rgba(${l},${l},${l},${a})`;
+}
+// For colours read at draw time (plugins painting straight onto the canvas).
+const ink = c => isDark() ? toDark(c) : c;
+
+const INK_KEYS = new Set(['color', 'borderColor', 'backgroundColor', 'pointBackgroundColor',
+    'pointBorderColor', 'pointHoverBackgroundColor', 'pointHoverBorderColor',
+    'hoverBackgroundColor', 'hoverBorderColor', 'titleColor', 'bodyColor', 'tickColor']);
+function collectInk(obj, path, out, depth) {
+    if (!obj || typeof obj !== 'object' || depth > 6) return;
+    for (const k of Object.keys(obj)) {
+        const v = obj[k];
+        if (INK_KEYS.has(k) && (typeof v === 'string' || (Array.isArray(v) && v.length && v.every(x => typeof x === 'string')))) {
+            out.push({ path: path.concat(k), v });
+        } else if (v && typeof v === 'object' && !Array.isArray(v)) {
+            collectInk(v, path.concat(k), out, depth + 1);
+        }
+    }
+}
+// Paths, not object references: Chart.js re-clones scale options on every
+// update, so the light values are re-applied through the live config.
+function inkChart(chart, dark) {
+    if (!chart.$ink) {
+        const out = [];
+        chart.config.data.datasets.forEach((ds, i) => collectInk(ds, ['data', 'datasets', i], out, 0));
+        collectInk(chart.config.options, ['options'], out, 0);
+        chart.$ink = out;
+    }
+    for (const { path, v } of chart.$ink) {
+        let o = chart.config;
+        for (let i = 0; i < path.length - 1 && o; i++) o = o[path[i]];
+        if (o) o[path[path.length - 1]] = dark ? (Array.isArray(v) ? v.map(toDark) : toDark(v)) : v;
+    }
+}
+
 const chartRegistry = [];
 Chart.register({
     id: 'themeTracker',
-    afterInit(chart) { chartRegistry.push(chart); }
+    // Runs before the first render, so a chart built in dark mode never
+    // flashes its light colours.
+    afterInit(chart) { chartRegistry.push(chart); inkChart(chart, isDark()); }
 });
+// Chart.js copies its colour defaults into each chart's scale options when it
+// is built, and inkChart() maps those copies — so they must stay on the light
+// design, or a chart built in dark mode gets darkened twice.
+Chart.defaults.color = PALETTE.light.mid;
 function applyChartTheme() {
-    const dark = document.documentElement.getAttribute('data-theme') === 'dark';
-    Object.assign(C, dark ? PALETTE.dark : PALETTE.light);
-    Chart.defaults.color       = C.mid;
-    GRID.color = C.gridLine;
-    chartRegistry.forEach(chart => {
-        ['x', 'y', 'r'].forEach(k => {
-            const sc = chart.options.scales && chart.options.scales[k];
-            if (!sc) return;
-            if (sc.ticks) sc.ticks.color = C.mid;
-            if (sc.grid && sc.grid.color !== undefined) sc.grid.color = C.gridLine;
-            if (sc.angleLines && sc.angleLines.color !== undefined) sc.angleLines.color = C.gridLine;
-            if (sc.pointLabels) sc.pointLabels.color = C.light;
-        });
-        chart.update('none');
-    });
+    // Legend text is resolved live at draw time rather than copied, so it
+    // follows the theme here instead.
+    Chart.defaults.plugins.legend.labels.color = isDark() ? PALETTE.dark.mid : PALETTE.light.mid;
+    chartRegistry.forEach(chart => { inkChart(chart, isDark()); chart.update('none'); });
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1351,9 +1404,6 @@ function renderDashboard(D, lastModified) {
     drawSeason(D);
     drawTables(D);
 
-    // Corrects any grid/angle-line drawn with a literal (non-theme-aware)
-    // color above, in case the page loaded straight into dark mode.
-    applyChartTheme();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1529,12 +1579,12 @@ const dormantShade = {
         const { ctx, chartArea:{ top, bottom }, scales:{ x } } = chart;
         const x0 = x.getPixelForValue(0), x1 = x.getPixelForValue(idx);
         ctx.save();
-        ctx.fillStyle = 'rgba(0,0,0,.045)';
+        ctx.fillStyle = ink('rgba(0,0,0,.045)');
         ctx.fillRect(x0, top, x1-x0, bottom-top);
-        ctx.strokeStyle = '#bbb'; ctx.setLineDash([4,3]); ctx.lineWidth = 1;
+        ctx.strokeStyle = ink('#bbb'); ctx.setLineDash([4,3]); ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(x1, top); ctx.lineTo(x1, bottom); ctx.stroke();
         ctx.setLineDash([]);
-        ctx.fillStyle = '#999'; ctx.font = '10px -apple-system, sans-serif';
+        ctx.fillStyle = ink('#999'); ctx.font = '10px -apple-system, sans-serif';
         ctx.textAlign = 'center';
         if (x1-x0 > 70) ctx.fillText('account largely dormant', (x0+x1)/2, top+14);
         ctx.restore();
@@ -1594,7 +1644,7 @@ function drawCalendar(D) {
     const labels = ['0', '1–10', '11–30', '31–60', '61–120', '120+'];
     document.getElementById('calLegend').innerHTML =
         'Scrobbles in a day: ' +
-        CAL_COLORS.map((c,i) => `<i style="background:${c}"></i><span>${labels[i]}</span>`).join('');
+        (isDark() ? CAL_COLORS_DARK : CAL_COLORS).map((c,i) => `<i style="background:${c}"></i><span>${labels[i]}</span>`).join('');
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1710,9 +1760,9 @@ function drawComet(D) {
                     if (!box) continue;
                     placed.push(box);
                     // Halo, so a label crossing a point or gridline stays readable.
-                    ctx.lineWidth = 3; ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 3; ctx.strokeStyle = ink('#fff');
                     ctx.strokeText(p.name, box.cx, box.cy);
-                    ctx.fillStyle = C.red;
+                    ctx.fillStyle = ink(C.red);
                     ctx.fillText(p.name, box.cx, box.cy);
                 }
                 ctx.restore();
