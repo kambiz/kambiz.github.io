@@ -1,7 +1,13 @@
 ---
 layout: null
-title: Kambiz Kamrani
 ---
+{%- comment -%}
+  The only layout on the site: every post in _posts/ gets it through the
+  defaults in _config.yml. Head, theme tokens, toggle, nav and footer follow
+  the conventions in CLAUDE.md; the post body is plain Markdown.
+{%- endcomment -%}
+{%- assign description = page.description | default: page.excerpt | strip_html | normalize_whitespace | truncate: 200 -%}
+{%- assign canonical = page.url | prepend: site.url -%}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -10,17 +16,19 @@ title: Kambiz Kamrani
 <link rel="icon" href="/favicon.ico" sizes="32x32">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<meta name="description" content="Surgeon with interests from critical care to global surgery, and in biology, anthropology, population genetics and data science.">
-<link rel="canonical" href="https://kambiz.github.io/">
-<meta property="og:type" content="website">
+<meta name="description" content="{{ description | escape }}">
+<link rel="canonical" href="{{ canonical }}">
+<link rel="alternate" type="application/atom+xml" title="Kambiz Kamrani" href="/feed.xml">
+<meta property="og:type" content="article">
 <meta property="og:site_name" content="Kambiz Kamrani">
-<meta property="og:title" content="Kambiz Kamrani">
-<meta property="og:description" content="Surgeon with interests from critical care to global surgery, and in biology, anthropology, population genetics and data science.">
-<meta property="og:url" content="https://kambiz.github.io/">
+<meta property="og:title" content="{{ page.title | escape }}">
+<meta property="og:description" content="{{ description | escape }}">
+<meta property="og:url" content="{{ canonical }}">
 <meta property="og:image" content="https://kambiz.github.io/assets/img/social-card.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Kambiz Kamrani, with a stippled portrait">
+<meta property="article:published_time" content="{{ page.date | date_to_xmlschema }}">
 <meta name="twitter:card" content="summary_large_image">
 <script>
 (function(){
@@ -31,7 +39,7 @@ title: Kambiz Kamrani
   } catch (e) {}
 })();
 </script>
-<title>Kambiz Kamrani</title>
+<title>{{ page.title | escape }} — Kambiz Kamrani</title>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 
@@ -76,28 +84,33 @@ a:hover { opacity:.6; }
 
 /* ── Header ── */
 .header { border-bottom:2px solid var(--border-strong); padding-bottom:28px; margin-bottom:44px; }
-.header h1 { font-size:2.4em; font-weight:700; letter-spacing:-.5px; margin-bottom:6px; }
+.header h1 { font-size:2.4em; font-weight:700; letter-spacing:-.5px; line-height:1.2; margin-bottom:6px; }
 .header-meta { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; }
+.post-date { font-size:.85em; color:var(--muted); font-variant-numeric:tabular-nums; }
 .nav-link { font-size:.78em; color:var(--faint); }
 .nav-link a { color:var(--faint); }
 .nav-link .current { color:var(--muted); font-weight:600; }
 
-/* ── Intro copy + portrait ── */
-.intro-row { display:flex; gap:48px; align-items:flex-start; margin-bottom:16px; }
-.intro { flex:1 1 auto; max-width:720px; }
-.portrait { flex:0 0 220px; }
-/* The frame trims the bottom 16px of the 446×926 scans, which carry stray
-   scanner marks; the images themselves stay untouched. */
-.portrait-frame { aspect-ratio:446 / 910; overflow:hidden; border:1px solid var(--border-soft); }
-.portrait img { display:block; width:100%; height:auto; }
-/* One portrait per theme, swapped by the same data-theme the rest of the page
-   follows, so the toggle flips it too. Both are lazy, so the hidden one isn't
-   downloaded until it's needed. */
-.portrait .dark { display:none; }
-:root[data-theme="dark"] .portrait .light { display:none; }
-:root[data-theme="dark"] .portrait .dark { display:block; }
-.intro p { font-size:.95em; margin-bottom:18px; }
-.intro p:last-child { margin-bottom:0; }
+/* ── Post body ── */
+.post { max-width:680px; font-size:1.05em; }
+.post > * + * { margin-top:1.1em; }
+.post h2 { font-size:1.4em; line-height:1.3; margin-top:1.8em; }
+.post h3 { font-size:1.15em; line-height:1.3; margin-top:1.5em; }
+.post ul, .post ol { padding-left:1.4em; }
+.post li + li { margin-top:.3em; }
+.post blockquote { border-left:3px solid var(--border); padding-left:1em; color:var(--muted); }
+.post img { max-width:100%; height:auto; display:block; }
+.post hr { border:0; border-top:1px solid var(--border-soft); }
+.post code {
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.88em;
+  background:var(--bg-alt); padding:.1em .3em; border-radius:3px;
+}
+.post pre { background:var(--bg-alt); padding:14px 16px; border-radius:4px; overflow-x:auto; line-height:1.45; }
+.post pre code { background:none; padding:0; font-size:.85em; }
+.post table { border-collapse:collapse; font-size:.92em; }
+.post th, .post td { border-bottom:1px solid var(--border-soft); padding:6px 12px 6px 0; text-align:left; }
+.post-back { margin-top:40px; font-size:.9em; }
+.post-back a { color:var(--muted); }
 
 /* ── Footer ── */
 .footer { text-align:center; margin-top:56px; padding-top:24px; border-top:1px solid var(--border); color:var(--faint); font-size:.82em; }
@@ -113,8 +126,6 @@ a:hover { opacity:.6; }
   .header h1 { font-size:1.65em; }
   .header-meta { flex-direction:column; align-items:flex-start; gap:4px; }
   .theme-toggle { top:12px; right:12px; width:32px; height:32px; }
-  .intro-row { flex-direction:column; gap:24px; }
-  .portrait { order:-1; flex:0 0 auto; width:160px; }
 }
 </style>
 </head>
@@ -123,24 +134,18 @@ a:hover { opacity:.6; }
 <div class="container">
 
 <div class="header">
-  <h1>Kambiz Kamrani</h1>
+  <h1>{{ page.title | escape }}</h1>
   <div class="header-meta">
-    {% include nav.html current="Home" %}
+    <time class="post-date" datetime="{{ page.date | date_to_xmlschema }}">{{ page.date | date: "%B %-d, %Y" }}</time>
+    {% include nav.html current="Blog" %}
   </div>
 </div>
 
-<div class="intro-row">
-<div class="intro">
-  <p>My name is Kambiz Kamrani and I'm a surgeon. I completed my general surgery residency and have broad interests within the field, from critical care to global surgery.</p>
-  <p>Aside from medicine, my broader academic interests are in biology, anthropology, population genetics, and data science. I know Python, R, and SQL, and I'm a fan of open-source software.</p>
-  <p>My <a href="/cv/">CV</a>, <a href="https://orcid.org/0000-0001-7826-7328">ORCID</a>, <a href="https://scholar.google.com/citations?user=GMg5xAkAAAAJ&hl=en">Google Scholar</a>, <a href="https://www.ncbi.nlm.nih.gov/myncbi/18uL-w50tvl5c/bibliography/public/">PubMed</a> and <a href="https://publons.com/researcher/1622401/kambiz-kamrani/">Publons</a> have more detailed information on my research and professional experience.</p>
-  <p>{% if site.posts.size > 0 %}From time to time, I post things <a href="/blog/">here</a> as well as things I am tinkering on <a href="https://github.com/kambiz">Github</a>.{% else %}Things I am tinkering on are on <a href="https://github.com/kambiz">Github</a>.{% endif %} You can see what I am listening to on <a href="https://www.last.fm/user/kambizkamrani">Last.fm</a> — or fifteen years of it <a href="/music/">charted here</a> — and my workouts on <a href="https://www.strava.com/athletes/kambizkamrani">Strava</a>.</p>
-</div>
-<div class="portrait"><div class="portrait-frame">
-  <img class="light" src="/assets/img/portrait-light.webp" width="446" height="926" loading="lazy" alt="Stippled portrait of Kambiz Kamrani">
-  <img class="dark" src="/assets/img/portrait-dark.webp" width="446" height="926" loading="lazy" alt="Stippled portrait of Kambiz Kamrani">
-</div></div>
-</div>
+<article class="post">
+{{ content }}
+</article>
+
+<p class="post-back"><a href="/blog/">&larr; All posts</a></p>
 
 {% include footer.html %}
 

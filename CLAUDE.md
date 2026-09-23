@@ -6,9 +6,9 @@ Guidance for Claude Code sessions working in this repository.
 
 Kambiz Kamrani's personal site, served by GitHub Pages at https://kambiz.github.io
 from `master`. Jekyll builds it, but every page is `layout: null`, so it's
-self-contained: its own `<style>` and scripts, no shared layout or
-stylesheet. The only shared pieces are the nav and footer includes (see
-Shared conventions). Merging to `master` deploys. The "Site check" workflow
+self-contained: its own `<style>` and scripts, no shared stylesheet. The only
+shared pieces are the nav and footer includes (see Shared conventions) and
+`_layouts/post.html`, which blog posts get by default. Merging to `master` deploys. The "Site check" workflow
 (`.github/workflows/site-check.yml`) builds the site and loads every page in
 Chromium on each PR and push to `master`; run
 `.github/scripts/check-site.mjs` locally against a served `_site` for the
@@ -18,7 +18,8 @@ same check.
 |---|---|---|
 | `/` | `index.html` | Bio, theme-matched portrait (`assets/img/portrait-{light,dark}.webp`) |
 | `/cv/` | `cv/index.html` | Static content plus two Chart.js charts |
-| `/blog/` | `blog/index.html` | Post list via Liquid; `_posts/` is currently empty |
+| `/blog/` | `blog/index.html` | Post list via Liquid. Hidden while `_posts/` is empty (see below) |
+| `/blog/<year>/<slug>/` | `_posts/*.md` | Rendered through `_layouts/post.html` |
 | `/exercise/` | `exercise.html` | Peloton dashboard from `kambizkamrani_workouts.csv` |
 | `/music/` | `music.html` | Last.fm dashboard from `kambizkamrani_lastfm.csv` (+ `lastfm_artist_tags.json`) |
 
@@ -81,6 +82,12 @@ still copied into every page, so keep those copies in sync.
   `''` removes it. Change the markup in `_includes/`, not in the JS.
   The per-page CSS for `.nav-link`, `.footer` and `.footer-note` still lives
   in each page's `<style>`.
+- **Blog visibility:** while `_posts/` is empty the blog hides itself. The
+  Blog nav entry (`needs_posts: true` in `_data/nav.yml`) and the home page's
+  "I post things here" clause are left out, and `/blog/` carries `noindex`.
+  The first post brings all three back, with no other edits needed.
+  `_layouts/post.html` copies the theme tokens and toggle like every other
+  page, so keep it in sync with them.
 - **Theme tokens:** colours are CSS custom properties (`--bg`, `--fg`,
   `--muted`, `--faint`, `--border*`, `--accent`, …), defined on `:root`,
   redefined under `@media (prefers-color-scheme: dark)` guarded by
@@ -136,8 +143,8 @@ still copied into every page, so keep those copies in sync.
 
 ## Config notes
 
-- `_config.yml` has no theme. Nothing uses a layout, and no Minima config
-  remains.
+- `_config.yml` has no theme and no Minima config. Its only `defaults` entry
+  gives posts `layout: post` and the permalink `/blog/:year/:title/`.
 - GitHub Pages renders Markdown files even without front matter, so any `.md`
   that shouldn't be public must be listed under `exclude` (as `README.md` and
   this file are).

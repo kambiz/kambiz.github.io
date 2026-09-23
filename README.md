@@ -2,6 +2,23 @@
 
 This is a repository to host my homepage, https://kambiz.github.io/
 
+## Writing a blog post
+
+Add a Markdown file to `_posts/` named `YYYY-MM-DD-slug.md`:
+
+```markdown
+---
+title: "The post's title"
+description: "Optional. One sentence for search results and link previews."
+---
+The first paragraph doubles as the preview text when there's no description.
+```
+
+It's published at `/blog/<year>/<slug>/` in the site's own style, with dark mode
+and link previews, and listed on `/blog/`. While `_posts/` is empty the blog
+hides itself: no Blog link in the nav, no mention on the home page, and `/blog/`
+is marked `noindex`. The first post brings all of that back.
+
 ## Data pages
 
 Two pages render a CSV that lives at the repo root. Both fetch it at runtime and
