@@ -6,8 +6,13 @@ Guidance for Claude Code sessions working in this repository.
 
 Kambiz Kamrani's personal site, served by GitHub Pages at https://kambiz.github.io
 from `master`. Jekyll builds it, but every page is `layout: null`, so it's
-self-contained: its own `<style>`, its own scripts, no shared layout, include
-or stylesheet. Merging to `master` deploys; there is no CI.
+self-contained: its own `<style>` and scripts, no shared layout or
+stylesheet. The only shared pieces are the nav and footer includes (see
+Shared conventions). Merging to `master` deploys. The "Site check" workflow
+(`.github/workflows/site-check.yml`) builds the site and loads every page in
+Chromium on each PR and push to `master`; run
+`.github/scripts/check-site.mjs` locally against a served `_site` for the
+same check.
 
 | Page | File | Notes |
 |---|---|---|
