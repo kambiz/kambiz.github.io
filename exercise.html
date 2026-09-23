@@ -51,6 +51,11 @@ body {
     line-height:1.6;
 }
 .container { max-width:1200px; margin:0 auto; }
+/* Names the chart ink in captions: black on the light page, white on the dark. */
+.ink-word::before { content:"black"; }
+:root[data-theme="dark"] .ink-word::before { content:"white"; }
+/* Inline links take their surrounding text colour rather than browser blue. */
+a { color:inherit; text-underline-offset:2px; }
 
 /* ── Theme toggle ── */
 .theme-toggle {
@@ -406,35 +411,89 @@ const PALETTE = {
     light: { black:'#000', dark:'#333', mid:'#666', light:'#999', vlight:'#ccc', red:'#c0392b', gridLine:'#e8e8e8', chartGrid:'rgba(0,0,0,0.06)' },
     dark:  { black:'#f0f0f0', dark:'#ccc', mid:'#aaa', light:'#888', vlight:'#444', red:'#e0574a', gridLine:'#333', chartGrid:'rgba(255,255,255,0.08)' }
 };
-const C = { ...PALETTE.light };
+// Every chart is built from the light design; the theme code below maps it.
+const C = PALETTE.light;
 const grays = ['#1a1a1a','#2e2e2e','#424242','#575757','#6b6b6b','#808080','#949494','#a8a8a8','#bcbcbc'];
 const vivid  = ['#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#34495e','#e91e63'];
 
 Chart.defaults.font.family = 'inherit';
 
 // ─────────────────────────────────────────────────────────────
-//  THEME (light/dark) — mutates C for charts built after a toggle,
-//  and retroactively recolors already-built ones via the registry.
+//  THEME (light/dark)
+//  Greys carry this design's ink: black series, grey ramps, hairlines.
+//  In dark mode a grey's lightness is mapped from the light page's range
+//  (white page → black ink) onto the dark page's (#0d0d0d → #f0f0f0), so
+//  every grey keeps its contrast against the page — a black series turns
+//  near-white instead of vanishing, and a faint grey stays faint instead of
+//  becoming the brightest thing on screen. Saturated colours pass through,
+//  except the accent, which follows the CSS. Charts are captured in their
+//  light form once, so toggling back restores them exactly.
 // ─────────────────────────────────────────────────────────────
+const isDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
+function toDark(c) {
+    if (typeof c !== 'string') return c;
+    if (c.toLowerCase() === PALETTE.light.red) return PALETTE.dark.red;
+    let r, g, b, a = null, m;
+    if ((m = c.match(/^#([0-9a-f]{3})$/i))) [r, g, b] = [...m[1]].map(h => parseInt(h + h, 16));
+    else if ((m = c.match(/^#([0-9a-f]{6})$/i))) [r, g, b] = [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16));
+    else if ((m = c.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/))) {
+        [r, g, b] = [m[1], m[2], m[3]].map(Number);
+        if (m[4] !== undefined) a = m[4];
+    } else return c;
+    if (r !== g || g !== b) return c;
+    const l = Math.round(13 + (255 - r) * 227 / 255);
+    return a === null ? `rgb(${l},${l},${l})` : `rgba(${l},${l},${l},${a})`;
+}
+// For colours read at draw time (plugins painting straight onto the canvas).
+const ink = c => isDark() ? toDark(c) : c;
+
+const INK_KEYS = new Set(['color', 'borderColor', 'backgroundColor', 'pointBackgroundColor',
+    'pointBorderColor', 'pointHoverBackgroundColor', 'pointHoverBorderColor',
+    'hoverBackgroundColor', 'hoverBorderColor', 'titleColor', 'bodyColor', 'tickColor']);
+function collectInk(obj, path, out, depth) {
+    if (!obj || typeof obj !== 'object' || depth > 6) return;
+    for (const k of Object.keys(obj)) {
+        const v = obj[k];
+        if (INK_KEYS.has(k) && (typeof v === 'string' || (Array.isArray(v) && v.length && v.every(x => typeof x === 'string')))) {
+            out.push({ path: path.concat(k), v });
+        } else if (v && typeof v === 'object' && !Array.isArray(v)) {
+            collectInk(v, path.concat(k), out, depth + 1);
+        }
+    }
+}
+// Paths, not object references: Chart.js re-clones scale options on every
+// update, so the light values are re-applied through the live config.
+function inkChart(chart, dark) {
+    if (!chart.$ink) {
+        const out = [];
+        chart.config.data.datasets.forEach((ds, i) => collectInk(ds, ['data', 'datasets', i], out, 0));
+        collectInk(chart.config.options, ['options'], out, 0);
+        chart.$ink = out;
+    }
+    for (const { path, v } of chart.$ink) {
+        let o = chart.config;
+        for (let i = 0; i < path.length - 1 && o; i++) o = o[path[i]];
+        if (o) o[path[path.length - 1]] = dark ? (Array.isArray(v) ? v.map(toDark) : toDark(v)) : v;
+    }
+}
+
 const chartRegistry = [];
 Chart.register({
     id: 'themeTracker',
-    afterInit(chart) { chartRegistry.push(chart); }
+    // Runs before the first render, so a chart built in dark mode never
+    // flashes its light colours.
+    afterInit(chart) { chartRegistry.push(chart); inkChart(chart, isDark()); }
 });
+// Chart.js copies these defaults into each chart's scale options when it is
+// built, and inkChart() maps those copies — so they must stay on the light
+// design, or a chart built in dark mode gets darkened twice.
+Chart.defaults.color       = PALETTE.light.mid;
+Chart.defaults.borderColor = PALETTE.light.gridLine;
 function applyChartTheme() {
-    const dark = document.documentElement.getAttribute('data-theme') === 'dark';
-    Object.assign(C, dark ? PALETTE.dark : PALETTE.light);
-    Chart.defaults.color       = C.mid;
-    Chart.defaults.borderColor = C.gridLine;
-    chartRegistry.forEach(chart => {
-        ['x', 'y'].forEach(k => {
-            const sc = chart.options.scales && chart.options.scales[k];
-            if (!sc) return;
-            if (sc.ticks) sc.ticks.color = C.mid;
-            if (sc.grid && sc.grid.color !== undefined) sc.grid.color = C.chartGrid;
-        });
-        chart.update('none');
-    });
+    // Legend text is resolved live at draw time rather than copied, so it
+    // follows the theme here instead.
+    Chart.defaults.plugins.legend.labels.color = isDark() ? PALETTE.dark.mid : PALETTE.light.mid;
+    chartRegistry.forEach(chart => { inkChart(chart, isDark()); chart.update('none'); });
 }
 applyChartTheme();
 // The toggle button's own click handling lives in the independent script
@@ -1497,7 +1556,7 @@ function drawDisciplineCharts(ds) {
                     meta.data.forEach((pt,i)=>{
                         if(means[i]===null) return;
                         const x=pt.x, yT=ys.getPixelForValue(means[i]+stds[i]), yB=ys.getPixelForValue(means[i]-stds[i]);
-                        ctx.save(); ctx.strokeStyle=color; ctx.lineWidth=1.2;
+                        ctx.save(); ctx.strokeStyle=ink(color); ctx.lineWidth=1.2;
                         [[x,yT,x,yB],[x-3,yT,x+3,yT],[x-3,yB,x+3,yB]].forEach(([x1,y1,x2,y2])=>{
                             ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
                         });
@@ -1672,7 +1731,7 @@ function drawDisciplineCharts(ds) {
                 const ctx=chart.ctx, meta=chart.getDatasetMeta(0), xs=chart.scales.x;
                 meta.data.forEach((bar,i)=>{
                     const x = xs.getPixelForValue(D(rows[i].early));
-                    ctx.save(); ctx.fillStyle='#fff'; ctx.strokeStyle=C.red; ctx.lineWidth=2;
+                    ctx.save(); ctx.fillStyle=ink('#fff'); ctx.strokeStyle=ink(C.red); ctx.lineWidth=2;
                     ctx.beginPath(); ctx.arc(x, bar.y, 4.5, 0, Math.PI*2);
                     ctx.fill(); ctx.stroke(); ctx.restore();
                 });
@@ -2022,7 +2081,7 @@ function renderDashboard(data, lastModified) {
 
         <div class="chart-container feature">
             <h2>How the Training Mix Has Shifted</h2>
-            <div class="description">Hours per month by discipline &nbsp;|&nbsp; red = walking, running, rowing &nbsp;|&nbsp; black = cycling &nbsp;|&nbsp; grey = yoga, stretching, meditation${partialNote ? ` &nbsp;|&nbsp; ${partialNote} omitted as a partial month` : ''}</div>
+            <div class="description">Hours per month by discipline &nbsp;|&nbsp; red = walking, running, rowing &nbsp;|&nbsp; <span class="ink-word"></span> = cycling &nbsp;|&nbsp; grey = yoga, stretching, meditation${partialNote ? ` &nbsp;|&nbsp; ${partialNote} omitted as a partial month` : ''}</div>
             <canvas id="mixChart"></canvas>
             <div class="method-note">
                 Bars are stacked hours, so total height is total training volume and each band is
@@ -2202,7 +2261,7 @@ function renderDashboard(data, lastModified) {
                         meta.data.forEach((pt,i)=>{
                             if(means[i]===null) return;
                             const x=pt.x, yT=ys.getPixelForValue(means[i]+stds[i]), yB=ys.getPixelForValue(means[i]-stds[i]);
-                            ctx.save(); ctx.strokeStyle=color; ctx.lineWidth=1.2;
+                            ctx.save(); ctx.strokeStyle=ink(color); ctx.lineWidth=1.2;
                             [[x,yT,x,yB],[x-3,yT,x+3,yT],[x-3,yB,x+3,yB]].forEach(([x1,y1,x2,y2])=>{
                                 ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
                             });
@@ -2378,7 +2437,7 @@ function renderDashboard(data, lastModified) {
                     meta.data.forEach((bar,i)=>{
                         const x = xs.getPixelForValue(rows[i].early);
                         ctx.save();
-                        ctx.fillStyle = '#fff'; ctx.strokeStyle = C.red; ctx.lineWidth = 2;
+                        ctx.fillStyle = ink('#fff'); ctx.strokeStyle = ink(C.red); ctx.lineWidth = 2;
                         ctx.beginPath(); ctx.arc(x, bar.y, 4.5, 0, Math.PI*2);
                         ctx.fill(); ctx.stroke(); ctx.restore();
                     });
@@ -2523,9 +2582,9 @@ function renderDashboard(data, lastModified) {
                             const x0 = c - half, x1 = c + half;
                             ctx.save();
                             ctx.beginPath(); ctx.rect(x0, ys.top, x1-x0, ys.bottom-ys.top); ctx.clip();
-                            ctx.fillStyle = '#fafafa';
+                            ctx.fillStyle = ink('#fafafa');
                             ctx.fillRect(x0, ys.top, x1-x0, ys.bottom-ys.top);
-                            ctx.strokeStyle = 'rgba(0,0,0,0.10)'; ctx.lineWidth = 1;
+                            ctx.strokeStyle = ink('rgba(0,0,0,0.10)'); ctx.lineWidth = 1;
                             for (let x = x0 - (ys.bottom-ys.top); x < x1; x += 7) {
                                 ctx.beginPath();
                                 ctx.moveTo(x, ys.bottom); ctx.lineTo(x + (ys.bottom-ys.top), ys.top);
@@ -2534,7 +2593,7 @@ function renderDashboard(data, lastModified) {
                             ctx.restore();
                             // Side rules so the break edge is unambiguous
                             ctx.save();
-                            ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1; ctx.setLineDash([3,3]);
+                            ctx.strokeStyle = ink('rgba(0,0,0,0.35)'); ctx.lineWidth = 1; ctx.setLineDash([3,3]);
                             [x0,x1].forEach(x => {
                                 ctx.beginPath(); ctx.moveTo(x, ys.top); ctx.lineTo(x, ys.bottom); ctx.stroke();
                             });
@@ -2544,7 +2603,7 @@ function renderDashboard(data, lastModified) {
                             ctx.translate((x0+x1)/2, (ys.top+ys.bottom)/2);
                             ctx.rotate(-Math.PI/2);
                             ctx.textAlign='center'; ctx.textBaseline='middle';
-                            ctx.fillStyle = C.dark; ctx.font = '600 11px inherit';
+                            ctx.fillStyle = ink(C.dark); ctx.font = '600 11px inherit';
                             ctx.fillText(`${g.months} months off the bike`, 0, 0);
                             ctx.restore();
                         });
@@ -2682,7 +2741,7 @@ function renderDashboard(data, lastModified) {
                 const ys = chart.scales.y, ctx = chart.ctx;
                 if (100 < ys.min || 100 > ys.max) return;
                 const y = ys.getPixelForValue(100);
-                ctx.save(); ctx.strokeStyle='rgba(0,0,0,0.30)'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+                ctx.save(); ctx.strokeStyle=ink('rgba(0,0,0,0.30)'); ctx.lineWidth=1; ctx.setLineDash([4,4]);
                 ctx.beginPath(); ctx.moveTo(chart.scales.x.left,y); ctx.lineTo(chart.scales.x.right,y); ctx.stroke();
                 ctx.restore();
             }}]
@@ -2902,7 +2961,7 @@ function renderDashboard(data, lastModified) {
                 if (!ys) return;
                 const yTop = ys.getPixelForValue(1.5), yBot = ys.getPixelForValue(0.8);
                 ctx.save();
-                ctx.fillStyle = 'rgba(0,0,0,0.035)';
+                ctx.fillStyle = ink('rgba(0,0,0,0.035)');
                 ctx.fillRect(xs.left, yTop, xs.right-xs.left, yBot-yTop);
                 ctx.restore();
             }}]
@@ -2996,9 +3055,6 @@ function renderDashboard(data, lastModified) {
         }
     });
 
-    // Corrects any grid line drawn with a literal (non-theme-aware) color
-    // above, in case the page loaded straight into dark mode.
-    applyChartTheme();
 }
 
 // ─────────────────────────────────────────────────────────────
