@@ -1,0 +1,44 @@
+name: Site check
+
+# Builds the site the way GitHub Pages does, then loads every page in a
+# headless browser (see .github/scripts/check-site.mjs). A clean build alone
+# proves little here: Liquid can silently mangle a dashboard's inline script.
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      - name: Build
+        run: bundle exec jekyll build
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save --no-package-lock playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Check pages in a browser
+        run: |
+          (cd _site && python3 -m http.server 8123 > /dev/null 2>&1 &)
+          for i in $(seq 1 20); do curl -sf http://127.0.0.1:8123/ > /dev/null && break; sleep 0.5; done
+          node .github/scripts/check-site.mjs http://127.0.0.1:8123
