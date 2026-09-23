@@ -212,6 +212,7 @@ canvas { max-height:400px; max-width:100%; }
 /* ── Footer ── */
 .footer { text-align:center; margin-top:48px; padding-top:24px; border-top:1px solid var(--border); color:var(--faint); font-size:.82em; }
 .footer a { color:var(--muted); }
+.footer-note { margin-bottom:10px; }
 .footer .social-row {
     display:flex; justify-content:center; flex-wrap:wrap;
     gap:8px 20px; margin-bottom:12px; font-size:1.05em;
@@ -265,6 +266,8 @@ canvas { max-height:400px; max-width:100%; }
   render();
 })();
 </script>
+<template id="site-nav">{% include nav.html current="Music" %}</template>
+<template id="site-footer">{% include footer.html note="Built from a Last.fm API export &middot; parsed and charted in the browser" %}</template>
 <div class="container" id="app"></div>
 
 <script>
@@ -288,6 +291,18 @@ canvas { max-height:400px; max-width:100%; }
    value in this script, put it in a data attribute on an element outside
    this block and read it from the DOM.
    ───────────────────────────────────────────────────────────────────────── */
+// Nav and footer markup live in _includes/, rendered by Jekyll into <template>s
+// outside this Liquid-guarded script. The footer note slot is filled per page.
+const siteNav = () => document.getElementById('site-nav').innerHTML;
+function siteFooter(note) {
+    const frag = document.getElementById('site-footer').content.cloneNode(true);
+    const slot = frag.querySelector('.footer-note');
+    if (slot && note !== undefined) slot.textContent = note;
+    if (slot && !slot.textContent.trim()) slot.remove();
+    const box = document.createElement('div');
+    box.appendChild(frag);
+    return box.innerHTML;
+}
 // ─────────────────────────────────────────────────────────────
 //  CONFIG
 // ─────────────────────────────────────────────────────────────
@@ -1106,11 +1121,7 @@ function renderDashboard(D, lastModified) {
             <span class="subtitle">${comma(T.scrobbles)} scrobbles from
                 <a href="https://www.last.fm/user/kambizkamrani">Last.fm</a>,
                 ${fmtMon(T.first)} to ${fmtMon(T.last)}</span>
-            <span class="nav-link">
-                <a href="/">Home</a> &middot; <a href="/cv/">CV</a> &middot;
-                <a href="/blog/">Blog</a> &middot; <a href="/exercise/">Exercise</a> &middot;
-                <span class="current">Music</span>
-            </span>
+            ${siteNav()}
         </div>
         <div class="last-updated">Data last updated ${lastModified ? fmtDate(Date.parse(lastModified)) : '—'}</div>
     </div>
@@ -1391,17 +1402,7 @@ function renderDashboard(D, lastModified) {
         </div>
     </div>
 
-    <div class="footer">
-        <div style="margin-bottom:10px;">Built from a Last.fm API export &middot; parsed and charted in the browser</div>
-        <div class="social-row">
-            <a href="https://github.com/kambiz">GitHub</a>
-            <a href="https://www.twitter.com/kambiz">Twitter</a>
-            <a href="https://www.linkedin.com/in/kambiz">LinkedIn</a>
-            <a href="https://www.last.fm/user/kambizkamrani">Last.fm</a>
-            <a href="https://www.strava.com/athletes/kambizkamrani">Strava</a>
-        </div>
-        <div>Kambiz Kamrani &middot; kambiz.github.io</div>
-    </div>
+    ${siteFooter()}
     `;
 
     drawClock(D);

@@ -1,0 +1,7 @@
+<span class="nav-link">
+{%- for item in site.data.nav -%}
+{%- unless forloop.first %} &middot; {% endunless -%}
+{%- if item.title == include.current -%}<span class="current">{{ item.title }}</span>
+{%- else -%}<a href="{{ item.url }}">{{ item.title }}</a>{%- endif -%}
+{%- endfor -%}
+</span>

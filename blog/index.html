@@ -114,10 +114,7 @@ a:hover { opacity:.6; }
 <div class="header">
   <h1>Blog</h1>
   <div class="header-meta">
-    <span class="nav-link">
-      <a href="/">Home</a> &middot; <a href="/cv/">CV</a> &middot; <span class="current">Blog</span> &middot;
-      <a href="/exercise/">Exercise</a> &middot; <a href="/music/">Music</a>
-    </span>
+    {% include nav.html current="Blog" %}
   </div>
 </div>
 
@@ -134,16 +131,7 @@ a:hover { opacity:.6; }
 <p class="empty">No posts yet.</p>
 {% endif %}
 
-<div class="footer">
-  <div class="social-row">
-    <a href="https://github.com/kambiz">GitHub</a>
-    <a href="https://www.twitter.com/kambiz">Twitter</a>
-    <a href="https://www.linkedin.com/in/kambiz">LinkedIn</a>
-    <a href="https://www.last.fm/user/kambizkamrani">Last.fm</a>
-    <a href="https://www.strava.com/athletes/kambizkamrani">Strava</a>
-  </div>
-  <div>Kambiz Kamrani &middot; kambiz.github.io</div>
-</div>
+{% include footer.html %}
 
 </div><!-- /container -->
 <script>
