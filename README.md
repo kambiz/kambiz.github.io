@@ -17,8 +17,37 @@ export invalidates the cache on its own.
 
 ### Refreshing the music data
 
-Replace `kambizkamrani_lastfm.csv` with a new export and commit. The expected
-shape is four columns, no header:
+This happens automatically. The **Refresh Last.fm data** workflow
+(`.github/workflows/refresh-lastfm.yml`) runs once a day and does three things:
+
+1. Runs `tools/refresh_lastfm.py`, which asks the Last.fm API for everything
+   scrobbled since the CSV's newest row and adds it at the top. Plays that
+   reached Last.fm late (from an offline phone, say) are slotted in where
+   they belong if they fall within the last two days the CSV covers.
+   Existing rows are never rewritten or dropped.
+2. Runs `tools/fetch_lastfm_tags.py`, which fetches genre tags for any newly
+   qualifying artists.
+3. Commits both files to `master`, which redeploys the site.
+
+To run it on demand, use *Actions → Refresh Last.fm data → Run workflow*.
+
+Setup, once:
+
+- Add a **secret** named `LASTFM_API_KEY` under *Settings → Secrets and
+  variables → Actions*. Without it the workflow skips, with a warning.
+- Optionally add a **variable** named `LASTFM_TZ`, an IANA zone such as
+  `America/Los_Angeles`. It's needed if the export's timestamps are in a
+  local zone rather than UTC, which is the default.
+  - The export carries no zone of its own, so every run first re-fetches the
+    last two days the CSV already holds. It checks that `LASTFM_TZ`
+    reproduces them exactly.
+  - If they don't match, it writes nothing and fails, naming the offset it
+    found.
+
+Locally: `LASTFM_API_KEY=... python3 tools/refresh_lastfm.py`.
+
+A full re-export still works too. Replace the file and commit. The expected
+shape is four columns, no header, newest first:
 
 ```
 artist,album,track,"20 Sep 2026, 23:49"

@@ -1,0 +1,82 @@
+name: Refresh Last.fm data
+
+# Once a day, append new scrobbles to kambizkamrani_lastfm.csv, fetch genre
+# tags for any artist new enough to need them, and commit both to master,
+# which redeploys /music. Needs the LASTFM_API_KEY repository secret; the
+# LASTFM_TZ repository variable overrides the export's zone (default UTC).
+on:
+  schedule:
+    - cron: '17 9 * * *'     # 09:17 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: write            # commit the refreshed data
+  pages: write               # request a Pages build after the push
+
+concurrency:
+  group: refresh-lastfm
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+      LASTFM_TZ: ${{ vars.LASTFM_TZ }}
+    steps:
+      - name: Check for the API key
+        id: key
+        run: |
+          if [ -z "$LASTFM_API_KEY" ]; then
+            echo "::warning::LASTFM_API_KEY secret is not set; skipping the refresh. Add it under Settings → Secrets and variables → Actions."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.ok == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.key.outputs.ok == 'true'
+        with:
+          python-version: '3.12'
+
+      - name: Append new scrobbles
+        if: steps.key.outputs.ok == 'true'
+        run: python3 tools/refresh_lastfm.py
+
+      - name: Fetch tags for new artists
+        if: steps.key.outputs.ok == 'true'
+        run: python3 tools/fetch_lastfm_tags.py
+
+      - name: Commit and push
+        id: push
+        if: steps.key.outputs.ok == 'true'
+        run: |
+          if git diff --quiet -- kambizkamrani_lastfm.csv lastfm_artist_tags.json; then
+            echo "No new scrobbles; nothing to commit."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          added=$(git diff --numstat -- kambizkamrani_lastfm.csv | cut -f1)
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add kambizkamrani_lastfm.csv lastfm_artist_tags.json
+          git commit -q -m "Refresh Last.fm data (+${added:-0} scrobbles)"
+          # Someone may have pushed since checkout; this job only touches the
+          # two data files, so rebasing onto their work is safe.
+          for i in 1 2 3; do
+            git pull -q --rebase origin master && git push -q origin HEAD:master && break
+            sleep $((i * 10))
+          done
+          [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/master)" ]
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Request a Pages build
+        if: steps.push.outputs.pushed == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X POST "repos/${GITHUB_REPOSITORY}/pages/builds" --silent
