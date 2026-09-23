@@ -53,15 +53,29 @@ inside a `{% raw %}` … `{% endraw %}` guard:
 - To confirm a change survived, diff the guarded script in the source
   against `_site/…/index.html`; only blank lines should differ.
 
-## Shared conventions (duplicated in every page, keep them in sync)
+## Shared conventions
 
-- **Nav:** every page shows all five links in the order
-  Home · CV · Blog · Exercise · Music, with the current page as
-  `<span class="current">` rather than a link. On `/exercise` and `/music` the
-  header, nav and footer are built in JS (`app.innerHTML`), so edit them there.
-- **Footer:** a horizontal social row (GitHub, Twitter, LinkedIn, Last.fm,
-  Strava) above "Kambiz Kamrani · kambiz.github.io". The dashboards add one
-  note line above it (data freshness / data source).
+The nav and footer are shared includes. Everything else in this section is
+still copied into every page, so keep those copies in sync.
+
+- **Nav:** one list in `_data/nav.yml` (Home · CV · Blog · Exercise · Music),
+  rendered by `_includes/nav.html`. Each page passes its own title, e.g.
+  `{% include nav.html current="CV" %}`, and that entry becomes
+  `<span class="current">` instead of a link. Add, rename or reorder pages in
+  the YAML only.
+- **Footer:** `_includes/footer.html`, a horizontal social row (GitHub,
+  Twitter, LinkedIn, Last.fm, Strava) above "Kambiz Kamrani ·
+  kambiz.github.io". It takes an optional one-line note shown above the row:
+  `note="…"` for static text, or `slot=true` to reserve an empty
+  `.footer-note` that JS fills in.
+- **Nav and footer on the dashboards:** `/exercise` and `/music` build their
+  header and footer in JS inside the Liquid guard, where includes can't run.
+  So each page renders the includes into `<template id="site-nav">` and
+  `<template id="site-footer">` just above `#app`. The JS then inserts them
+  with `siteNav()` and `siteFooter(note)`: a string fills the note slot, and
+  `''` removes it. Change the markup in `_includes/`, not in the JS.
+  The per-page CSS for `.nav-link`, `.footer` and `.footer-note` still lives
+  in each page's `<style>`.
 - **Theme tokens:** colours are CSS custom properties (`--bg`, `--fg`,
   `--muted`, `--faint`, `--border*`, `--accent`, …), defined on `:root`,
   redefined under `@media (prefers-color-scheme: dark)` guarded by

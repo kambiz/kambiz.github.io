@@ -125,10 +125,7 @@ a:hover { opacity:.6; }
 <div class="header">
   <h1>Kambiz Kamrani</h1>
   <div class="header-meta">
-    <span class="nav-link">
-      <span class="current">Home</span> &middot; <a href="/cv/">CV</a> &middot; <a href="/blog/">Blog</a> &middot;
-      <a href="/exercise/">Exercise</a> &middot; <a href="/music/">Music</a>
-    </span>
+    {% include nav.html current="Home" %}
   </div>
 </div>
 
@@ -145,16 +142,7 @@ a:hover { opacity:.6; }
 </div></div>
 </div>
 
-<div class="footer">
-  <div class="social-row">
-    <a href="https://github.com/kambiz">GitHub</a>
-    <a href="https://www.twitter.com/kambiz">Twitter</a>
-    <a href="https://www.linkedin.com/in/kambiz">LinkedIn</a>
-    <a href="https://www.last.fm/user/kambizkamrani">Last.fm</a>
-    <a href="https://www.strava.com/athletes/kambizkamrani">Strava</a>
-  </div>
-  <div>Kambiz Kamrani &middot; kambiz.github.io</div>
-</div>
+{% include footer.html %}
 
 </div><!-- /container -->
 <script>

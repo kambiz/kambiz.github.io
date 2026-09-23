@@ -1,0 +1,12 @@
+# Site navigation, in display order. Every page renders this list through
+# _includes/nav.html, marking itself as current.
+- title: Home
+  url: /
+- title: CV
+  url: /cv/
+- title: Blog
+  url: /blog/
+- title: Exercise
+  url: /exercise/
+- title: Music
+  url: /music/
