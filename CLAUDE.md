@@ -120,6 +120,17 @@ still copied into every page, so keep those copies in sync.
   `Last-Modified` and row count. Bump the version **only** when the processed
   data's shape changes, not for styling or chart changes, since a bump makes
   every visitor re-parse the CSV.
+- The Last.fm data refreshes itself. `.github/workflows/refresh-lastfm.yml`
+  runs daily at 09:17 UTC. It runs `tools/refresh_lastfm.py`, which adds new
+  scrobbles to the CSV (including late arrivals within its last two days), then `tools/fetch_lastfm_tags.py` for new
+  artists, and commits the result to `master` as `github-actions[bot]`. Pull
+  before editing either data file.
+  - It needs the `LASTFM_API_KEY` secret, and skips with a warning without it.
+  - The export's timestamps have no zone. `LASTFM_TZ` (a repository variable,
+    default `UTC`) says which zone they're in. Every run checks that setting
+    against the CSV's last two days, and refuses to write anything if it
+    doesn't match.
+  - The Peloton CSV is still refreshed by hand.
 - Chart.js is vendored at `assets/js/chart-4.4.0.umd.js`; don't switch back to
   a CDN (a failed CDN load blanks both dashboards).
 
