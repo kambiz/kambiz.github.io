@@ -8,6 +8,9 @@ permalink: /exercise/
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <script>
 (function(){
   try {
@@ -414,6 +417,17 @@ const PALETTE = {
 // Every chart is built from the light design; the theme code below maps it.
 const C = PALETTE.light;
 const grays = ['#1a1a1a','#2e2e2e','#424242','#575757','#6b6b6b','#808080','#949494','#a8a8a8','#bcbcbc'];
+// One distinct shade per bar: the palette as-is when it has enough, otherwise
+// the same span re-spaced — handing Chart.js a short array makes it wrap, so
+// the tenth bar would repeat the first bar's colour.
+function grayRamp(n) {
+    if (n <= grays.length) return grays.slice(0, n);
+    const lo = 0x1a, hi = 0xbc;
+    return Array.from({ length: n }, (_, i) => {
+        const h = Math.round(lo + (hi - lo) * i / (n - 1)).toString(16).padStart(2, '0');
+        return `#${h}${h}${h}`;
+    });
+}
 const vivid  = ['#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#34495e','#e91e63'];
 
 Chart.defaults.font.family = 'inherit';
@@ -1472,7 +1486,7 @@ function drawClassTypeChart(canvasId, rows, S) {
             labels: rows.map(r => r.type),
             datasets:[
                 { type:'bar', label:S.perfName, data: rows.map(r => S.toDisplay(r.mean)),
-                  backgroundColor: grays, borderWidth:0, yAxisID:'y', order:2 },
+                  backgroundColor: grayRamp(rows.length), borderWidth:0, yAxisID:'y', order:2 },
                 { type:'line', label:'Avg. heart rate', data: rows.map(r => r.hr),
                   borderColor:C.red, backgroundColor:C.red, borderWidth:2, tension:0,
                   pointRadius:4, pointBackgroundColor:C.red, pointBorderColor:'#fff',
@@ -2792,7 +2806,7 @@ function renderDashboard(data, lastModified) {
                 labels: paired.map(p=>p.l),
                 datasets:[
                     { type:'bar', label:'Hours', data:paired.map(p=>p.hrs), yAxisID:'y',
-                      backgroundColor:grays, borderWidth:0, order:2 },
+                      backgroundColor:grayRamp(paired.length), borderWidth:0, order:2 },
                     // tension 0 — these are unrelated categories, so a smoothed curve
                     // would imply interpolation between them that doesn't exist
                     { type:'line', label:'Sessions', data:paired.map(p=>p.n), yAxisID:'y1',
@@ -3040,7 +3054,7 @@ function renderDashboard(data, lastModified) {
     // 15 · Instructors
     new Chart(document.getElementById('instructorChart'),{
         type:'bar',
-        data:{ labels:instructors.labels, datasets:[{ data:instructors.hours, backgroundColor:grays, borderWidth:0 }] },
+        data:{ labels:instructors.labels, datasets:[{ data:instructors.hours, backgroundColor:grayRamp(instructors.labels.length), borderWidth:0 }] },
         options:{ indexAxis:'y', responsive:true,
             plugins:{
                 legend:{display:false},
