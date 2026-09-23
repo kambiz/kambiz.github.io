@@ -18,7 +18,7 @@ permalink: /cv/
 })();
 </script>
 <title>Curriculum Vitae — Kambiz Kamrani, MD</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/assets/js/chart-4.4.0.umd.js"></script>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 
@@ -164,7 +164,7 @@ canvas { max-width:100%; display:block; }
 <script>
 (function () {
   // Deliberately independent of the Chart.js-dependent script below: the
-  // toggle itself must keep working even if that CDN script fails to load.
+  // toggle itself must keep working even if Chart.js fails to load.
   var btn = document.getElementById('theme-toggle');
   function render() {
     btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
@@ -204,7 +204,7 @@ canvas { max-width:100%; display:block; }
     <div class="label">Fellow, American College of Surgeons</div>
   </div>
   <div class="stat-card">
-    <div class="value">6+</div>
+    <div class="value" id="years-practice">6+</div>
     <div class="label">Years Acute Care Practice</div>
   </div>
   <div class="stat-card">
@@ -367,7 +367,12 @@ canvas { max-width:100%; display:block; }
 'use strict';
 (function () {
 
-  const NOW = 2026 + 8 / 12; // Sep 2026
+  const today = new Date();
+  const NOW = today.getFullYear() + today.getMonth() / 12;
+  const PRACTICE_START = 2020 + 7 / 12; // Aug 2020, Banner Medical Group
+
+  const yearsEl = document.getElementById('years-practice');
+  if (yearsEl) yearsEl.textContent = Math.floor(NOW - PRACTICE_START) + '+';
 
   /* ─── Theme-aware chart colors ──────────────────────────────── */
   const chartRegistry = [];

@@ -6,20 +6,7 @@ baseurl: ""
 
 author: Kambiz Kamrani
 
-# Minima social links (shown in footer)
-github_username: kambiz
-twitter_username: kambiz
-linkedin_username: kambiz
-
-# Nav pages (order matters)
-header_pages:
-  - cv/index.html
-  - blog/index.html
-  - exercise.html
-  - music.html
-
 # Build settings
-theme: minima
 markdown: kramdown
 plugins:
   - jekyll-feed
