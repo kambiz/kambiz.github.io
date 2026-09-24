@@ -87,8 +87,13 @@ a:hover { opacity:.6; }
 .intro { flex:1 1 auto; max-width:720px; }
 .portrait { flex:0 0 220px; }
 /* The frame trims the bottom 16px of the 446×926 scans, which carry stray
-   scanner marks; the images themselves stay untouched. */
-.portrait-frame { aspect-ratio:446 / 910; overflow:hidden; border:1px solid var(--border-soft); }
+   scanner marks; the images themselves stay untouched. content-box keeps the
+   aspect ratio on the image area, so the border's width doesn't change the
+   crop. The border is the header rule's: black on light, near-white on dark. */
+.portrait-frame {
+  box-sizing:content-box; aspect-ratio:446 / 910; overflow:hidden;
+  border:2px solid var(--border-strong);
+}
 .portrait img { display:block; width:100%; height:auto; }
 /* One portrait per theme, swapped by the same data-theme the rest of the page
    follows, so the toggle flips it too. Both are lazy, so the hidden one isn't
