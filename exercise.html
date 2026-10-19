@@ -309,7 +309,7 @@ function siteFooter(note) {
 // Absolute path: the page is served from /exercise/ (see the permalink in this
 // file's front matter), so a relative name would resolve to /exercise/<file>.
 const CSV_FILENAME  = '/kambizkamrani_workouts.csv';
-const CACHE_KEY     = 'peloton_cache_v15'; // v15: calendar splits training from recovery-only days
+const CACHE_KEY     = 'peloton_cache_v16'; // v16: continuous month axis, year-over-year and best-effort series
 const REQUIRED_COLS = [
     'Workout Timestamp','Fitness Discipline','Length (minutes)',
     'Calories Burned','Avg. Watts','Avg. Heartrate','Instructor Name'
@@ -418,6 +418,10 @@ const TYPE_MIN_KINDS     = 3;   // fewer than this is a fact, not a chart
 // minimum base below which the ratio is not meaningful (see weeklyLoad).
 const ACWR_CHRONIC_WEEKS     = 4;
 const ACWR_MIN_CHRONIC_HOURS = 2;
+// Best-effort chart: the trailing window for "recent", and how many effort
+// rides a class length needs before its best means anything.
+const BEST_RECENT_DAYS = 90;
+const BEST_MIN_RIDES   = 5;
 // Calendar shading steps, in minutes logged on the day. Two ramps of the same
 // intensity so a day's length still reads, while hue separates a training day
 // from one spent entirely on yoga, stretching or meditation — the distinction
@@ -604,11 +608,26 @@ function parseCSV(text) {
 // ─────────────────────────────────────────────────────────────
 //  TIMESTAMP PARSER
 // ─────────────────────────────────────────────────────────────
+// "2026-10-18 11:36 (-07)" -> Date at that wall-clock time in the viewer's zone.
+// Built from its parts rather than handed to the Date constructor: a space
+// between date and time is not a format the spec requires browsers to accept.
+// The zone suffix is dropped on purpose, so a 7am ride reads as 7am wherever
+// it was logged or viewed.
+const TS_RE = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})/;
 function parseTS(s) {
-    if (!s) return null;
-    const d = new Date(s.replace(/\s*\([^)]*\)$/, '').trim());
+    const m = TS_RE.exec((s || '').trim());
+    if (!m) return null;
+    const d = new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5]);
     return isNaN(d.getTime()) ? null : d;
 }
+// Calendar-day key and whole-day arithmetic that ignore clock changes: a
+// daylight-saving day is 23 or 25 hours long, so "exactly 24h apart" would
+// break every streak twice a year in any zone that observes it.
+const dayKey  = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const dayNum  = k => { const [y,m,d] = k.split('-').map(Number); return Date.UTC(y, m-1, d) / 86400000; };
+// Tooltip count for a month on the continuous axis, which may hold too few to plot.
+const nRides  = (n, noun) => n >= MIN_PER_BUCKET ? `${n} ${noun}s` : `fewer than ${MIN_PER_BUCKET} ${noun}s — not plotted`;
+const signed  = (v, unit='') => `${v >= 0 ? '+' : '−'}${Math.abs(v)}${unit}`;
 
 // ─────────────────────────────────────────────────────────────
 //  VALIDATE
@@ -684,7 +703,14 @@ function analyzeDiscipline(valid, spec) {
 
     // ── Monthly trend, time-weighted by session length ─────────
     const byMonth   = groupBy(sessions, r=>r._ym);
-    const monthKeys = [...byMonth.keys()].sort().filter(k=>byMonth.get(k).length >= MIN_PER_BUCKET);
+    const qualKeys  = [...byMonth.keys()].sort().filter(k=>byMonth.get(k).length >= MIN_PER_BUCKET);
+    // The axis runs through every calendar month, with thin or empty months
+    // carried as nulls. Skipping them would put a lay-off's two ends side by
+    // side, and the least-squares trend (fitted on position) would treat an
+    // eight-month break as one month.
+    const qual = new Set(qualKeys);
+    const monthKeys = monthRange(qualKeys);
+    const per = fn => monthKeys.map(k => qual.has(k) ? fn(byMonth.get(k)) : null);
 
     function weighted(rows, valueOf) {
         const totalMin = rows.reduce((s,r)=>s+(num(r,'Length (minutes)')||0),0);
@@ -697,28 +723,29 @@ function analyzeDiscipline(valid, spec) {
         return { mean:+mu.toFixed(2), std:+Math.sqrt(variance).toFixed(2) };
     }
 
+    const count = monthKeys.map(k => qual.has(k) ? byMonth.get(k).length : 0);
     const trend = {
         labels: monthKeys,
-        perf:      monthKeys.map(k=>weighted(byMonth.get(k), spec.perf).mean),
-        perfStd:   monthKeys.map(k=>weighted(byMonth.get(k), spec.perf).std),
-        hr:        monthKeys.map(k=>weighted(byMonth.get(k), r=>num(r,'Avg. Heartrate')).mean),
-        hrStd:     monthKeys.map(k=>weighted(byMonth.get(k), r=>num(r,'Avg. Heartrate')).std),
-        count:     monthKeys.map(k=>byMonth.get(k).length)
+        perf:      per(rs => weighted(rs, spec.perf).mean),
+        perfStd:   per(rs => weighted(rs, spec.perf).std),
+        hr:        per(rs => weighted(rs, r=>num(r,'Avg. Heartrate')).mean),
+        hrStd:     per(rs => weighted(rs, r=>num(r,'Avg. Heartrate')).std),
+        count
     };
 
     // ── Efficiency: performance per heartbeat, per session then averaged ──
     const efficiency = {
         labels: monthKeys,
-        value:  monthKeys.map(k => {
-            const vals = byMonth.get(k).map(r => spec.perf(r)/num(r,'Avg. Heartrate'));
+        value:  per(rs => {
+            const vals = rs.map(r => spec.perf(r)/num(r,'Avg. Heartrate'));
             return +(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(4);
         }),
-        count:  monthKeys.map(k=>byMonth.get(k).length)
+        count
     };
     efficiency.trend = linearTrend(efficiency.value);
 
     // Enough history to draw a trend line at all?
-    const hasTrend = monthKeys.length >= MIN_TREND_MONTHS && sessions.length >= MIN_TREND_SESSIONS;
+    const hasTrend = qualKeys.length >= MIN_TREND_MONTHS && sessions.length >= MIN_TREND_SESSIONS;
 
     // ── Performance held at constant session length ────────────
     const periodKeys = [...new Set(sessions.map(r=>r._hy))].sort();
@@ -754,15 +781,24 @@ function analyzeDiscipline(valid, spec) {
         ]))
     };
 
-    // ── Same class, repeated ───────────────────────────────────
+    // ── Same class format, repeated ────────────────────────────
+    // Grouped by title, which fixes the format and length but not the class
+    // itself: "45 min Power Zone Endurance Ride" is dozens of different classes
+    // from different instructors, and almost none was taken twice. The ten
+    // most-repeated formats are kept (not the ten biggest gains, which would
+    // pick the result) and then ordered by gain.
     const classProgress = [...groupBy(sessions, r=>r['Title']).entries()]
         .filter(([,v]) => v.length >= 6)
+        .sort((a,b) => b[1].length - a[1].length)
+        .slice(0,10)
         .map(([title,v]) => {
             const early  = v.slice(0,3).map(spec.perf);
             const recent = v.slice(-3).map(spec.perf);
             const e = early.reduce((a,b)=>a+b,0)/early.length;
             const l = recent.reduce((a,b)=>a+b,0)/recent.length;
             return { title, rides:v.length,
+                     instructors: new Set(v.map(r => r['Instructor Name']).filter(Boolean)).size,
+                     from: v[0]._ym, to: v[v.length-1]._ym,
                      early:+e.toFixed(2), recent:+l.toFixed(2),
                      gain:+(l-e).toFixed(2), pct:+((l-e)/e*100).toFixed(1),
                      best:+Math.max(...v.map(spec.perf)).toFixed(2) };
@@ -794,7 +830,7 @@ function analyzeDiscipline(valid, spec) {
     summary.powerPct   = summary.perfPct;
 
     return { ...out, hasData:true, hasTrend, trend, efficiency, byLength, scatter,
-             classProgress, summary, months:monthKeys.length };
+             classProgress, summary, months:qualKeys.length };
 }
 
 // Pad a value range and round the ends outward to a readable step, so an axis
@@ -808,7 +844,21 @@ function niceBounds(values, padFrac) {
              hi: Math.ceil((hi + pad)/step)*step };
 }
 
+// Every "YYYY-MM" from the first key to the last, inclusive.
+function monthRange(keys) {
+    if (!keys.length) return [];
+    let [y, m] = keys[0].split('-').map(Number);
+    const out = [], last = keys[keys.length-1];
+    for (;;) {
+        const k = `${y}-${String(m).padStart(2,'0')}`;
+        out.push(k);
+        if (k >= last) return out;
+        if (++m === 13) { m = 1; y++; }
+    }
+}
+
 // Least-squares fit over indexed points; returns y-values for a straight trend line.
+// Index is position on the axis, so the axis must be evenly spaced in time.
 function linearTrend(values) {
     const pts = values.map((v,i)=>[i,v]).filter(p => p[1] !== null);
     if (pts.length < 2) return values.map(()=>null);
@@ -861,6 +911,20 @@ function processData(rows) {
     const effort      = cycling.sessions;
     const progression = cycling.summary;
 
+    // ── Warm-ups and cool-downs, for the note on why power excludes them ──
+    const warmCool = (() => {
+        const year = Math.max(...valid.map(r => r._yr));
+        const rides = cyclingAll.filter(r => r._yr === year);
+        const meanW = type => {
+            const w = rides.filter(r => (r['Type']||'').trim() === type)
+                           .map(r => num(r,'Avg. Watts')).filter(v => v > 0);
+            return w.length ? Math.round(w.reduce((a,b)=>a+b,0)/w.length) : null;
+        };
+        const n = rides.filter(r => NON_EFFORT_TYPES.includes((r['Type']||'').trim())).length;
+        return { year, pct: rides.length ? Math.round(100*n/rides.length) : 0,
+                 warmW: meanW('Warm Up'), coolW: meanW('Cool Down') };
+    })();
+
     // ── Headline stats ─────────────────────────────────────────
     const totalMinutes = valid.reduce((s,r)=>s+(num(r,'Length (minutes)')||0),0);
     const dates     = valid.map(r=>r.ts.getTime());
@@ -880,6 +944,7 @@ function processData(rows) {
         effortRides:     effort.length,
         noPowerRides:    cycling.excluded,
         firstDate:       fmtDate(firstDate),
+        lastWorkout:     lastDate.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),
         lastDate:        fmtDate(lastDate)
     };
 
@@ -970,12 +1035,15 @@ function processData(rows) {
 
     // How the power is produced: leg speed (cadence) vs gear (resistance).
     // Cycling only — Peloton exports neither field for the tread or the rower.
+    // Same month axis as the trend charts; months they leave empty stay empty.
+    const monthMean = (map, keys, counts, col) => keys.map((k,i) =>
+        counts[i] ? meanStd(map.get(k).map(r=>num(r,col))).mean : null);
     const effMap  = groupBy(effort, r=>r._ym);
     const effKeys = cycling.trend.labels;
     const cadenceResistance = {
         labels:     effKeys,
-        cadence:    effKeys.map(k=>meanStd(effMap.get(k).map(r=>num(r,'Avg. Cadence (RPM)'))).mean),
-        resistance: effKeys.map(k=>meanStd(effMap.get(k).map(r=>num(r,'Avg. Resistance'))).mean)
+        cadence:    monthMean(effMap, effKeys, cycling.trend.count, 'Avg. Cadence (RPM)'),
+        resistance: monthMean(effMap, effKeys, cycling.trend.count, 'Avg. Resistance')
     };
 
     // Running's closest analogue to cadence-vs-resistance: how fast versus how
@@ -986,8 +1054,8 @@ function processData(rows) {
     const runKeys = disciplineStats.running.trend.labels;
     const speedIncline = {
         labels:  runKeys,
-        speed:   runKeys.map(k=>meanStd(runMap.get(k).map(r=>num(r,'Avg. Speed (mph)'))).mean),
-        incline: runKeys.map(k=>meanStd(runMap.get(k).map(r=>num(r,'Avg. Incline'))).mean)
+        speed:   monthMean(runMap, runKeys, disciplineStats.running.trend.count, 'Avg. Speed (mph)'),
+        incline: monthMean(runMap, runKeys, disciplineStats.running.trend.count, 'Avg. Incline')
     };
 
     // ═══════════════════════════════════════════════════════════
@@ -1100,7 +1168,7 @@ function processData(rows) {
             // How long the break really was must come from ride dates, not from
             // the run of empty months: the estimate keeps reporting for a while
             // after the last ride, because the 90-day window still holds rides.
-            const runStart = new Date(L[b.start] + '-01').getTime();
+            const runStart = new Date(L[b.start] + '-01T00:00:00').getTime();
             const runEndM  = L[b.end].split('-').map(Number);
             const runEnd   = new Date(runEndM[0], runEndM[1], 0, 23, 59, 59).getTime();
             const lastBefore  = [...ftpPool].reverse().find(x => x.t < runStart);
@@ -1156,11 +1224,15 @@ function processData(rows) {
              const i = zoneEvolution.labels.indexOf(label);
              const tested = Math.round(num(r,'Avg. Watts') * FTP_TEST_FACTOR);
              zoneEvolution.tests.push({
-                 label, i, tested, date: r.ts.toISOString().slice(0,10),
+                 label, i, tested, date: dayKey(r.ts),
                  estimate: i > -1 ? zoneEvolution.ftp[i] : null,
                  deltaPct: i > -1 ? +(100*(tested/zoneEvolution.ftp[i]-1)).toFixed(1) : null
              });
          });
+
+    // Longest stretch between consecutive tests, in months, for the method note.
+    zoneEvolution.testGapMonths = zoneEvolution.tests.reduce((mx, t, i, a) => i === 0 ? 0
+        : Math.max(mx, (dayNum(t.date) - dayNum(a[i-1].date)) / 30.44), 0);
 
     // ── Which zone each ride's AVERAGE fell into, by quarter ───
     // NOT time-in-zone: the export carries one average per ride, so an interval
@@ -1223,12 +1295,15 @@ function processData(rows) {
         blockCounts: Array.from({length:24}, (_,h) => (blockRides[Math.floor(h/3)*3] || []).length)
     };
 
-    const uniqueDates = [...new Set(valid.map(r=>r.ts.toDateString()))].map(s=>new Date(s)).sort((a,b)=>a-b);
-    let longestStreak=1, curStreak=1;
-    for(let i=1;i<uniqueDates.length;i++){
-        const diff=(uniqueDates[i]-uniqueDates[i-1])/(1000*60*60*24);
-        if(diff===1){ curStreak++; longestStreak=Math.max(longestStreak,curStreak); } else curStreak=1;
+    // Whole calendar days, compared as day numbers — see dayNum for why.
+    const activeDays = [...new Set(valid.map(r => dayKey(r.ts)))].map(dayNum).sort((a,b)=>a-b);
+    let longestStreak = 1, curStreak = 1;
+    for (let i = 1; i < activeDays.length; i++) {
+        curStreak = activeDays[i] - activeDays[i-1] === 1 ? curStreak + 1 : 1;
+        longestStreak = Math.max(longestStreak, curStreak);
     }
+    // curStreak now holds the run ending on the last logged day.
+    const streakOngoing = curStreak === longestStreak;
 
     // ── Cross-discipline efficiency index ─────────────────────
     // Every discipline's output-per-heartbeat on one axis, each indexed to 100
@@ -1270,7 +1345,10 @@ function processData(rows) {
     DISCIPLINE_SPECS.forEach(spec => {
         const ds = disciplineStats[spec.key];
         if (!ds.hasData) return;
-        const m = groupBy(ds.sessions, r => (r['Type'] || 'Just Ride').trim() || 'Just Ride');
+        // Untyped sessions are recorded outside a class (outdoor GPS walks, in
+        // practice); naming them after the bike's "Just Ride" mislabelled walks.
+        const m = groupBy(ds.sessions, r => (r['Type'] || '').trim()
+            || (/outdoor/i.test(r['Title'] || '') ? 'Outdoor' : 'No class type'));
         const rowsOut = [...m.entries()]
             .filter(([,v]) => v.length >= TYPE_MIN_SESSIONS)
             .map(([type, v]) => ({
@@ -1370,10 +1448,55 @@ function processData(rows) {
         const active   = days.filter(d => d.mins > 0).length;
         const trained  = days.filter(d => d.trained).length;
         const recovery = active - trained;
-        const elapsed  = days.filter(d => new Date(d.date) <= lastDate).length;
+        const elapsed  = days.filter(d => !d.future).length;
         return { year:y, days, active, trained, recovery, elapsed,
                  pct: elapsed ? Math.round(100*active/elapsed) : 0 };
     });
+
+    // ── Year over year: cumulative hours by calendar date ─────
+    // One line per year on a shared Jan 1 → Dec 31 axis, so any two years can
+    // be compared at the same point in the calendar. The axis is a leap year;
+    // in other years Feb 29 adds nothing and the line simply carries over it.
+    // The current year stops at the last logged day rather than running flat
+    // to December, which would read as a year that had already ended.
+    const yearOverYear = (() => {
+        const axis = [];
+        for (let d = new Date(2024,0,1); d.getFullYear() === 2024; d.setDate(d.getDate()+1))
+            axis.push(dayKey(d).slice(5));
+        const lastKey = dayKey(lastDate);
+        const series = calYears.map(y => {
+            let cum = 0;
+            const data = axis.map(md => {
+                const k = `${y}-${md}`;
+                if (k > lastKey) return null;
+                cum += (dayMinutes.get(k) || 0) / 60;
+                return +cum.toFixed(1);
+            });
+            return { year: y, data, total: +cum.toFixed(1) };
+        });
+        return { axis, todayIdx: axis.indexOf(lastKey.slice(5)), series };
+    })();
+
+    // ── Best effort at each ride length ────────────────────────
+    // Ride averages, not a second-by-second power curve (the export has no
+    // samples): for each class length, the best average ever held against the
+    // best in the trailing window. FTP tests stay in, since they are the
+    // hardest 20 minutes on record and belong in a "best" series.
+    const bestEfforts = (() => {
+        const cutoff = lastDate.getTime() - BEST_RECENT_DAYS * 86400000;
+        const top = rs => rs.reduce((a,b) => num(b,'Avg. Watts') > num(a,'Avg. Watts') ? b : a);
+        return [...groupBy(effort, r => num(r,'Length (minutes)')).entries()]
+            .filter(([,v]) => v.length >= BEST_MIN_RIDES)
+            .sort((a,b) => a[0] - b[0])
+            .map(([len, v]) => {
+                const all = top(v), recentRides = v.filter(r => r.ts.getTime() > cutoff);
+                const rec = recentRides.length ? top(recentRides) : null;
+                return { len, n: v.length, recentN: recentRides.length,
+                         best: num(all,'Avg. Watts'), bestDate: dayKey(all.ts), bestTitle: all['Title'],
+                         recent: rec ? num(rec,'Avg. Watts') : null,
+                         recentDate: rec ? dayKey(rec.ts) : null };
+            });
+    })();
 
     console.log(`✅ ${valid.length} workouts · ${effort.length} effort rides · ` +
                 `power ${progression.powerEarly}→${progression.powerNow}W · ` +
@@ -1383,7 +1506,8 @@ function processData(rows) {
     return { stats, longestStreak, disciplines, instructors,
              disciplineStats, cadenceResistance, speedIncline, hrZones, timeOfDay,
              monthlyHours, partialNote, zoneEvolution, zoneMix, POWER_ZONES,
-             effIndex, byClassType, weeklyLoad, calendar, calSummary };
+             effIndex, byClassType, weeklyLoad, calendar, calSummary,
+             streakOngoing, warmCool, yearOverYear, bestEfforts };
 }
 
 
@@ -1481,8 +1605,8 @@ function disciplineSectionHTML(ds, notes) {
     if (ds.classProgress.length >= 3) {
         html += `
         <div class="chart-container">
-            <h2>Same Class, Stronger Athlete (${S.label})</h2>
-            <div class="description">Classes done 6+ times — average of the first 3 attempts vs. the most recent 3</div>
+            <h2>Same Class Format, Stronger Athlete (${S.label})</h2>
+            <div class="description">The most-repeated class formats (6+ sessions each) — average of the first 3 vs. the most recent 3</div>
             <canvas id="${k}ClassChart"></canvas>
             ${notes.klass ? `<div class="method-note">${notes.klass}</div>` : ''}
         </div>`;
@@ -1490,12 +1614,12 @@ function disciplineSectionHTML(ds, notes) {
         const c = ds.classProgress[0];
         html += `
         <div class="chart-container">
-            <h2>Same Class, Stronger Athlete (${S.label})</h2>
-            <div class="description">Needs several classes repeated 6+ times to make a chart — so far only ${ds.classProgress.length} qualifies</div>
+            <h2>Same Class Format, Stronger Athlete (${S.label})</h2>
+            <div class="description">Needs several class formats repeated 6+ times to make a chart — so far only ${ds.classProgress.length} qualifies</div>
             <div class="method-note">
                 <b>${c.title}</b>, done ${c.rides} times: first three averaged ${S.fmt(c.early)},
                 most recent three ${S.fmt(c.recent)} — a change of
-                ${c.pct >= 0 ? '+' : ''}${c.pct}%. Best single effort: ${S.fmt(c.best)}.
+                ${signed(c.pct,'%')}. Best single effort: ${S.fmt(c.best)}.
             </div>
         </div>`;
     }
@@ -1570,7 +1694,7 @@ function drawDisciplineCharts(ds) {
                 plugins:{
                     legend:{ position:'top', labels:{color:C.mid,font:{size:11}} },
                     tooltip:{ callbacks:{
-                        title: items => `${items[0].label} · ${t.count[items[0].dataIndex]} sessions`,
+                        title: items => `${items[0].label} · ${nRides(t.count[items[0].dataIndex], 'session')}`,
                         label: ctx => {
                             const i=ctx.dataIndex, v=ctx.parsed.y;
                             if (v===null) return null;
@@ -1635,7 +1759,7 @@ function drawDisciplineCharts(ds) {
                 plugins:{
                     legend:{ position:'top', labels:{color:C.mid,font:{size:11}} },
                     tooltip:{ callbacks:{
-                        title: items => `${items[0].label} · ${ds.efficiency.count[items[0].dataIndex]} sessions`,
+                        title: items => `${items[0].label} · ${nRides(ds.efficiency.count[items[0].dataIndex], 'session')}`,
                         label: ctx => ctx.parsed.y===null ? null
                             : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(3)} ${S.effUnit}`
                     }}
@@ -1753,8 +1877,9 @@ function drawDisciplineCharts(ds) {
                     tooltip:{ callbacks:{ label: ctx => {
                         const c = rows[ctx.dataIndex];
                         return [`First 3: ${S.fmt(c.early)}`, `Recent 3: ${S.fmt(c.recent)}`,
-                                `Change: ${c.pct>=0?'+':''}${c.pct}%`,
-                                `Best: ${S.fmt(c.best)} · ${c.rides} sessions`];
+                                `Change: ${signed(c.pct,'%')}`,
+                                `Best: ${S.fmt(c.best)} · ${c.rides} sessions, ${c.from} → ${c.to}`,
+                                `${c.instructors} instructor${c.instructors===1?'':'s'}`];
                     }}}
                 },
                 scales:{
@@ -1788,7 +1913,8 @@ function renderDashboard(data, lastModified) {
     const { stats, longestStreak, disciplines, instructors,
             disciplineStats, cadenceResistance, speedIncline, hrZones, timeOfDay,
             monthlyHours, partialNote, zoneEvolution, zoneMix, POWER_ZONES,
-            effIndex, byClassType, weeklyLoad, calendar, calSummary } = data;
+            effIndex, byClassType, weeklyLoad, calendar, calSummary,
+            streakOngoing, warmCool, yearOverYear, bestEfforts } = data;
 
     // The cycling section predates the generic analyzer and reads these names
     // directly; map them across rather than rewriting eight working charts.
@@ -1807,9 +1933,10 @@ function renderDashboard(data, lastModified) {
         count:    cycling.trend.count
     };
 
-    const luStr = lastModified
-        ? new Date(lastModified).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})
-        : null;
+    // The export's own last workout, not the file's Last-Modified header: on
+    // GitHub Pages that header is the deploy time, which says nothing about how
+    // current the data is.
+    const luStr = stats.lastWorkout || null;
 
     const bestClass = classProgress[0];
 
@@ -1818,7 +1945,7 @@ function renderDashboard(data, lastModified) {
             <h1>Peloton Workout Analysis</h1>
             <div class="header-meta">
                 <span class="subtitle">${stats.totalWorkouts.toLocaleString()} workouts &nbsp;|&nbsp; ${stats.firstDate} – ${stats.lastDate}</span>
-                ${luStr ? `<span class="last-updated">Data last updated: ${luStr}</span>` : ''}
+                ${luStr ? `<span class="last-updated">Latest workout: ${luStr}</span>` : ''}
                 ${siteNav()}
             </div>
         </div>
@@ -1830,12 +1957,12 @@ function renderDashboard(data, lastModified) {
             <strong>${stats.totalHours.toLocaleString()} hours</strong> since ${stats.firstDate}.
             On the bike, across ${stats.effortRides.toLocaleString()} real training rides, average power rose from
             <strong>${progression.powerEarly}W</strong> to <strong>${progression.powerNow}W</strong>
-            (<strong>+${progression.powerPct}%</strong>) while cycling heart rate moved only
-            ${progression.hrDelta >= 0 ? '+' : ''}${progression.hrDelta} bpm
-            (${progression.hrEarly} → ${progression.hrNow}) — an aerobic efficiency gain of
-            <strong>+${progression.effPct}%</strong>, from ${progression.effEarly} to
+            (<strong>${signed(progression.powerPct,'%')}</strong>) while cycling heart rate moved
+            ${signed(progression.hrDelta)} bpm
+            (${progression.hrEarly} → ${progression.hrNow}) — an aerobic efficiency change of
+            <strong>${signed(progression.effPct,'%')}</strong>, from ${progression.effEarly} to
             ${progression.effNow} watts per heartbeat.
-            ${bestClass ? `Biggest single-class jump: <strong>${bestClass.title}</strong>,
+            ${bestClass ? `Biggest gain among the most-ridden class formats: <strong>${bestClass.title}</strong>,
             ${Math.round(bestClass.early)}W → ${Math.round(bestClass.recent)}W over ${bestClass.rides} rides.` : ''}
             <br><br>
             Each discipline is measured on its own terms below — watts on the bike, speed on foot,
@@ -1869,8 +1996,9 @@ function renderDashboard(data, lastModified) {
                 100 is where that sport began, 150 means half again as much output for the same
                 cardiovascular cost.
                 <b>The comparison is of shape, not of a fair race</b> — each curve starts when that
-                discipline started, so cycling is showing three years of adaptation while rowing is
-                showing two quarters, and early gains in any sport are always the cheapest.
+                discipline started, so ${effIndex.series.map(sv => `${sv.label.toLowerCase()} has
+                ${sv.data.filter(v => v !== null).length} quarters of data`).join(', ')}, and early gains in any sport
+                are always the cheapest.
             </div>
         </div>` : ''}
 
@@ -1896,8 +2024,11 @@ function renderDashboard(data, lastModified) {
                 every discipline, so a growing meditation habit (~67 bpm) and yoga (~86 bpm) pulled the
                 line down from ~145 to ~105 bpm — that decline was a change in what was being averaged,
                 not a change in cardiovascular fitness. Cycling heart rate has actually been broadly flat.
-                (2) Power now excludes 5-minute warm-up and cool-down rides, which by 2026 were 57% of all
-                logged rides at roughly 60W and were dragging the average down over time. Outdoor rides
+                (2) Power now excludes warm-up and cool-down rides, which were
+                ${warmCool.pct}% of all logged rides in ${warmCool.year}. Neither is comparable with a
+                training ride: in ${warmCool.year} warm-ups averaged ${warmCool.warmW ?? '—'}W and
+                cool-downs ${warmCool.coolW ?? '—'}W, so leaving them in would make the line track how
+                often each was tacked on rather than fitness. Outdoor rides
                 (${stats.noPowerRides} of them) are also excluded from power figures: they record heart
                 rate but no wattage, so they land at 0W and pull the average down for no real reason.
             </div>
@@ -1924,8 +2055,19 @@ function renderDashboard(data, lastModified) {
                 Average watts falls as rides get longer — you simply cannot hold 45 minutes at your
                 20-minute power. Ride mix has shifted markedly toward shorter sessions, so a single
                 blended average understates recent progress and can even show a false plateau.
-                Holding duration constant, <b>every length band climbs monotonically</b>: the 45-minute
-                band alone went from 131W to 204W. Half-year periods are used here rather than months
+                Holding duration constant, ${(() => {
+                    const ends = powerByLength.buckets.map(b => {
+                        const v = powerByLength.series[b.key].filter(x => x !== null);
+                        return v.length >= 2 ? { label:b.label, first:v[0], last:v[v.length-1] } : null;
+                    }).filter(Boolean);
+                    if (!ends.length) return 'the bands are still too short to compare.';
+                    const up = ends.filter(e => e.last > e.first).length;
+                    const big = ends.reduce((a,b) => (b.last-b.first) > (a.last-a.first) ? b : a);
+                    return `<b>${up === ends.length ? 'every' : `${up} of ${ends.length}`} length band${up===1?'':'s'}
+                        ${up === 1 ? 'ends' : 'end'} well above where ${up === 1 ? 'it' : 'they'} started</b>, with the odd
+                        half-year dip along the way: the ${big.label} band went from ${Math.round(big.first)}W
+                        to ${Math.round(big.last)}W.`; })()}
+                Half-year periods are used here rather than months
                 or quarters because splitting four ways leaves too few rides per cell to be stable.
             </div>
         </div>
@@ -1942,15 +2084,37 @@ function renderDashboard(data, lastModified) {
         </div>
 
         <div class="chart-container">
-            <h2>Same Class, Stronger Rider</h2>
-            <div class="description">Classes ridden 6+ times — average of the first 3 attempts vs. the most recent 3</div>
+            <h2>Same Class Format, Stronger Rider</h2>
+            <div class="description">The ${classProgress.length} most-repeated ride formats — average of the first 3 rides vs. the most recent 3, ordered by change</div>
             <canvas id="classProgressChart"></canvas>
             <div class="method-note">
-                The tightest possible comparison: identical class, identical length, identical instructor
-                and identical intervals. Nothing varies except the rider, so the gap between the two ends
-                of each bar is as close to a pure fitness measurement as this dataset allows.
+                A format is a class title: same length, same class type, same structure. It is <b>not</b>
+                the same class repeated — these formats come from many different instructors and
+                playlists, and almost no individual class was ridden twice — so each bar carries some
+                class-to-class noise. Holding the format fixed still removes the biggest confounds,
+                ride length and class type.
+                The formats shown are the most-ridden ones, not the biggest gains, so the chart is not
+                picking its own result.
+                ${(() => { const pz = classProgress.filter(c => /power zone|ftp/i.test(c.title)).length;
+                    return pz ? `<b>${pz} of the ${classProgress.length}</b> are Power Zone or FTP formats, whose targets
+                    are set from FTP, so their watts rise with fitness by design.` : ''; })()}
             </div>
         </div>
+
+        ${bestEfforts.length >= 2 ? `
+        <div class="chart-container">
+            <h2>Best Effort at Each Ride Length</h2>
+            <div class="description">Highest average power ever held for each class length, against the best of the last ${BEST_RECENT_DAYS} days — lengths with ${BEST_MIN_RIDES}+ effort rides</div>
+            <canvas id="bestEffortChart"></canvas>
+            <div class="takeaway" id="bestEffortTakeaway"></div>
+            <div class="method-note">
+                The curve falls to the right because no one holds 60 minutes at their 20-minute power;
+                the gap between the two lines is how far current form sits from the best on record at
+                each length. These are <b>whole-ride averages</b>: the export has no second-by-second
+                power, so this is not a true power-duration curve, and an interval class with a strong
+                average can sit above a steadier ride that was actually harder.
+            </div>
+        </div>` : ''}
 
         <div class="chart-container">
             <h2>How the Power Gets Made — Cadence vs. Resistance</h2>
@@ -1970,8 +2134,9 @@ function renderDashboard(data, lastModified) {
             <div class="takeaway" id="zoneTakeaway"></div>
             <div class="method-note">
                 <b>Zones are anchored to estimated FTP, not to test results.</b> Peloton defines every zone
-                as a percentage of FTP, so this chart needs a threshold history — and the six FTP tests in
-                the export are a poor basis for one: they are sparse (a seven-month gap), and a test only
+                as a percentage of FTP, so this chart needs a threshold history — and the ${zoneEvolution.tests.length} FTP tests in
+                the export are a poor basis for one: they are sparse (as much as
+                ${Math.round(zoneEvolution.testGapMonths)} months apart), and a test only
                 captures how hard you went on that particular day.
                 FTP is instead estimated each month from <b>the five best effort rides in the previous 90
                 days</b>, which is a fair proxy because a hard 30–45 minute ride average is already close to
@@ -2025,8 +2190,12 @@ function renderDashboard(data, lastModified) {
             <div class="method-note">
                 Class types are prescriptive, so this is mostly a picture of what each class asks for
                 rather than of form. The useful consequence is that <b>a blended average-watts figure
-                partly tracks class choice, not just fitness</b>: Power Zone rides sit lowest here because
-                Endurance work is deliberately submaximal, not because they went badly. Ride length is
+                partly tracks class choice, not just fitness</b>. ${(() => {
+                    const t = byClassType.cycling, pz = t.find(x => x.type === 'Power Zone');
+                    return pz ? `Power Zone rides average ${Math.round(pz.mean)}W, ${t.indexOf(pz) === t.length-1
+                        ? 'the lowest here' : `ahead of only ${t.slice(t.indexOf(pz)+1).map(x=>x.type).join(' and ')}`}:
+                        much of that work is Endurance, which is deliberately submaximal, not a bad day.` : ''; })()}
+                Ride length is
                 already controlled for elsewhere in this section; this is the same confound in another
                 dimension.
                 ${(() => { const t = byClassType.cycling;
@@ -2058,12 +2227,14 @@ function renderDashboard(data, lastModified) {
                      removes that.`,
             scatter:`Up means faster; up without moving right means faster at the same heart rate. Because
                      incline is missing for walks, some of the vertical spread is terrain rather than form.`,
-            klass:  `Hike classes repeat the same simulated route and grade, which is exactly why they are
-                     the most trustworthy comparison in this section — the terrain that confounds the other
-                     walking charts is held fixed here.`,
+            klass:  `Each bar is one class format, taken from different instructors over time, so it is not
+                     the identical route every time. Holding the format fixed still keeps hikes compared with
+                     hikes and music walks with music walks, which the other walking charts cannot do.`,
             byType: byClassType.walking ? `Hikes run slower than music walks by design — the grade does the
                     work instead of the pace. Reading walking speed without the class type behind it makes a
-                    block of hiking look like a loss of fitness.` : null
+                    block of hiking look like a loss of fitness.${byClassType.walking.some(t => t.type === 'Outdoor')
+                    ? ` Outdoor walks are GPS-tracked walks outside rather than paced classes, which is why they
+                    sit apart from both.` : ''}` : null
         })}
 
         </div><!-- /panel-walking -->
@@ -2124,12 +2295,30 @@ function renderDashboard(data, lastModified) {
             <div class="method-note">
                 Bars are stacked hours, so total height is total training volume and each band is
                 its share of it. The dashed line is cycling's percentage of the month's hours, read
-                on the right axis — it falls even in months where total volume rose, which is what
-                separates a genuine change of emphasis from a quiet month on the bike.
+                on the right axis — when it falls in a month where total volume held or rose, that is a
+                genuine change of emphasis rather than a quiet month on the bike.
                 ${partialNote ? `<b>${partialNote}</b> is left out: the export stops partway through it,
                 so its bar would show a collapse in elapsed days rather than in training.` : ''}
             </div>
         </div>
+
+        ${yearOverYear.series.length >= 2 ? `
+        <div class="chart-container feature">
+            <h2>Year over Year</h2>
+            <div class="description">Cumulative hours trained by calendar date, one line per year &nbsp;|&nbsp; the current year stops at the latest workout</div>
+            <canvas id="yoyChart"></canvas>
+            <div class="takeaway" id="yoyTakeaway"></div>
+            <div class="method-note">
+                Comparing at the same calendar date is what makes years comparable mid-year: a running
+                total for an unfinished year is otherwise always behind a finished one. A steeper line is
+                a heavier stretch of training; a flat run is a break.
+                ${(() => { const s0 = yearOverYear.series[0], i = s0.data.findIndex(v => v > 0);
+                    if (i < 31) return '';
+                    const mon = new Date(2024, +yearOverYear.axis[i].slice(0,2) - 1, 1)
+                        .toLocaleDateString('en-US', { month:'long' });
+                    return `${s0.year} stays flat until ${mon} because that is where the history begins.`; })()}
+            </div>
+        </div>` : ''}
 
         <div class="chart-container">
             <h2>Workout Time of Day</h2>
@@ -2191,7 +2380,7 @@ function renderDashboard(data, lastModified) {
             <canvas id="instructorChart"></canvas>
         </div>
 
-        ${siteFooter(luStr ? 'Data last updated: ' + luStr : '')}
+        ${siteFooter(luStr ? 'Data through ' + luStr : '')}
     `;
 
     // ── Stat cards ─────────────────────────────────────────────
@@ -2199,9 +2388,9 @@ function renderDashboard(data, lastModified) {
         { v: stats.totalWorkouts.toLocaleString(),                        l: 'Total Workouts'   },
         { v: Math.round(stats.totalHours).toLocaleString() + ' hrs',      l: 'Time Invested'    },
         { v: Math.round(stats.cyclingDistance).toLocaleString() + ' mi',  l: 'Miles Cycled'     },
-        { v: longestStreak + ' days',                                     l: 'Longest Streak'   },
+        { v: longestStreak + ' days',                                     l: streakOngoing ? 'Longest Streak · Ongoing' : 'Longest Streak' },
         { v: progression.powerNow + 'W',                                  l: 'Current Avg Power', a:true },
-        { v: '+' + progression.effPct + '%',                              l: 'Aerobic Efficiency', a:true },
+        { v: signed(progression.effPct, '%'),                             l: 'Aerobic Efficiency', a:true },
         { v: Math.round(stats.totalOutputKJ/1000).toLocaleString() + 'k kJ', l: 'Total Work Done' },
         { v: Math.round(stats.totalCalories/1000) + 'k cal',              l: 'Calories Burned'  }
     ].forEach(s=>{
@@ -2216,7 +2405,7 @@ function renderDashboard(data, lastModified) {
         <div><div class="k">Power then → now</div><div class="v up">${progression.powerEarly} → ${progression.powerNow}W</div></div>
         <div><div class="k">Cycling HR then → now</div><div class="v">${progression.hrEarly} → ${progression.hrNow} bpm</div></div>
         <div><div class="k">Watts per heartbeat</div><div class="v up">${progression.effEarly} → ${progression.effNow}</div></div>
-        <div><div class="k">Efficiency gain</div><div class="v up">+${progression.effPct}%</div></div>`;
+        <div><div class="k">Efficiency change</div><div class="v ${progression.effPct>=0?'up':''}">${signed(progression.effPct,'%')}</div></div>`;
 
     const SS = {
         x:{ ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
@@ -2258,7 +2447,7 @@ function renderDashboard(data, lastModified) {
                     plugins:{
                         legend:{ display:true, position:'top', labels:{color:C.mid,font:{size:11}} },
                         tooltip:{ callbacks:{
-                            title: items => `${items[0].label} · ${cyclingTrend.count[items[0].dataIndex]} effort rides`,
+                            title: items => `${items[0].label} · ${nRides(cyclingTrend.count[items[0].dataIndex], 'effort ride')}`,
                             label: ctx=>{
                                 const i=ctx.dataIndex, v=ctx.parsed.y;
                                 if(v===null) return null;
@@ -2323,7 +2512,7 @@ function renderDashboard(data, lastModified) {
                 plugins:{
                     legend:{ position:'top', labels:{color:C.mid,font:{size:11}} },
                     tooltip:{ callbacks:{
-                        title: items => `${items[0].label} · ${efficiency.count[items[0].dataIndex]} effort rides`,
+                        title: items => `${items[0].label} · ${nRides(efficiency.count[items[0].dataIndex], 'effort ride')}`,
                         label: ctx => ctx.parsed.y === null ? null
                             : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(3)} W/bpm`
                     }}
@@ -2446,8 +2635,9 @@ function renderDashboard(data, lastModified) {
                         tooltip:{ callbacks:{ label: ctx => {
                             const c = rows[ctx.dataIndex];
                             return [`First 3: ${c.early}W`, `Recent 3: ${c.recent}W`,
-                                    `Gain: +${c.gain}W (+${c.pct}%)`,
-                                    `Best ever: ${c.best}W · ${c.rides} rides`];
+                                    `Change: ${signed(c.gain,'W')} (${signed(c.pct,'%')})`,
+                                    `Best ever: ${c.best}W · ${c.rides} rides, ${c.from} → ${c.to}`,
+                                    `${c.instructors} instructor${c.instructors===1?'':'s'}`];
                         }}}
                     },
                     scales:{
@@ -2506,6 +2696,58 @@ function renderDashboard(data, lastModified) {
                 }
             }
         });
+
+        // 6a · Best effort by ride length: all-time vs trailing 90 days, one axis
+        if (document.getElementById('bestEffortChart')) {
+            const B = bestEfforts;
+            const fmtDay = k => new Date(k + 'T00:00:00')
+                .toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+            const vals = B.flatMap(b => [b.best, b.recent].filter(v => v !== null));
+            const bb = { lo: Math.floor((Math.min(...vals) - 10) / 10) * 10,
+                         hi: Math.ceil((Math.max(...vals) + 10) / 10) * 10 };
+            new Chart(document.getElementById('bestEffortChart'), {
+                type:'line',
+                data:{ labels: B.map(b => `${b.len} min`), datasets:[
+                    { label:'All-time best', data: B.map(b => b.best),
+                      borderColor:C.black, backgroundColor:C.black, borderWidth:2, tension:0,
+                      pointRadius:5, pointBorderColor:'#fff', pointBorderWidth:2, fill:false },
+                    { label:`Best in the last ${BEST_RECENT_DAYS} days`, data: B.map(b => b.recent),
+                      borderColor:C.red, backgroundColor:C.red, borderWidth:2, tension:0, spanGaps:true,
+                      pointRadius:5, pointBorderColor:'#fff', pointBorderWidth:2, fill:false }
+                ]},
+                options:{
+                    responsive:true, interaction:{ mode:'index', intersect:false },
+                    plugins:{
+                        legend:{ position:'top', labels:{ color:C.mid, font:{size:11}, usePointStyle:true } },
+                        tooltip:{ callbacks:{
+                            title: items => { const b = B[items[0].dataIndex];
+                                return `${b.len}-minute rides · ${b.n} in total, ${b.recentN} in the last ${BEST_RECENT_DAYS} days`; },
+                            label: ctx => { const b = B[ctx.dataIndex];
+                                if (ctx.datasetIndex === 0) return `All-time best: ${b.best}W on ${fmtDay(b.bestDate)}`;
+                                return b.recent === null ? `No ${b.len}-minute rides in the last ${BEST_RECENT_DAYS} days`
+                                    : `Recent best: ${b.recent}W on ${fmtDay(b.recentDate)} (${Math.round(100*b.recent/b.best)}% of best)`; }
+                        }}
+                    },
+                    scales:{
+                        x:{ title:{ display:true, text:'Class length', color:C.mid, font:{size:11} },
+                            ticks:{ color:C.mid }, grid:{ display:false } },
+                        // Bounded to the data: the gap between the lines is the reading,
+                        // and a zero baseline would flatten it to a few pixels.
+                        y:{ min:bb.lo, max:bb.hi,
+                            title:{ display:true, text:'Average power (W)', color:C.black },
+                            ticks:{ color:C.mid, callback:v => v+'W' }, grid:{ color:'rgba(0,0,0,0.04)' } }
+                    }
+                }
+            });
+            const withRecent = B.filter(b => b.recent !== null);
+            const atBest = withRecent.filter(b => b.recentDate === b.bestDate);
+            const pct = withRecent.length
+                ? Math.round(withRecent.reduce((s,b) => s + 100*b.recent/b.best, 0) / withRecent.length) : null;
+            document.getElementById('bestEffortTakeaway').innerHTML = `
+                <div><div class="k">Lengths compared</div><div class="v">${B.length}</div></div>
+                <div><div class="k">Bests set in the last ${BEST_RECENT_DAYS} days</div><div class="v ${atBest.length?'up':''}">${atBest.length} of ${withRecent.length}</div></div>
+                <div><div class="k">Recent vs all-time, on average</div><div class="v">${pct === null ? '—' : pct + '%'}</div></div>`;
+        }
 
         // 6b · Power zone evolution — filled bands between zone boundaries
         (()=>{
@@ -2646,7 +2888,7 @@ function renderDashboard(data, lastModified) {
                 const z2 = Z[1], z4 = Z[3];
                 document.getElementById('zoneTakeaway').innerHTML = `
                     <div><div class="k">Estimated FTP</div><div class="v up">${f0} → ${f1}W</div></div>
-                    <div><div class="k">Change</div><div class="v up">+${Math.round(100*(f1/f0-1))}%</div></div>
+                    <div><div class="k">Change</div><div class="v ${f1>=f0?'up':''}">${signed(Math.round(100*(f1/f0-1)),'%')}</div></div>
                     <div><div class="k">Zone 2 (Endurance)</div><div class="v">${Math.round(f0*z2.lo)}–${Math.round(f0*z2.hi)} → ${Math.round(f1*z2.lo)}–${Math.round(f1*z2.hi)}W</div></div>
                     <div><div class="k">Zone 4 (Threshold)</div><div class="v">${Math.round(f0*z4.lo)}–${Math.round(f0*z4.hi)} → ${Math.round(f1*z4.lo)}–${Math.round(f1*z4.hi)}W</div></div>`;
             }
@@ -2898,6 +3140,66 @@ function renderDashboard(data, lastModified) {
         }
     });
 
+    // 9c · Year over year — cumulative hours on a shared calendar axis
+    (()=>{
+        const el = document.getElementById('yoyChart');
+        if (!el) return;
+        const Y = yearOverYear.series;
+        // Oldest lightest, current year in the accent, as in the scatter charts
+        const colorFor = i => i === Y.length-1 ? C.red : grays[Math.min(grays.length-1, (Y.length-1-i)*2 + 2)];
+        const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const fmtMD = md => `${MON[+md.slice(0,2)-1]} ${+md.slice(3)}`;
+        new Chart(el, {
+            type:'line',
+            data:{ labels: yearOverYear.axis, datasets: Y.map((sv,i) => ({
+                label: String(sv.year), data: sv.data,
+                borderColor: colorFor(i), backgroundColor: colorFor(i),
+                borderWidth: i === Y.length-1 ? 2.5 : 2, pointRadius:0, pointHoverRadius:4,
+                tension:0, fill:false, spanGaps:false
+            }))},
+            options:{
+                responsive:true, interaction:{ mode:'index', intersect:false },
+                layout:{ padding:{ right:36 } },
+                plugins:{
+                    legend:{ position:'top', labels:{ color:C.mid, font:{size:11}, usePointStyle:true } },
+                    tooltip:{ callbacks:{
+                        title: items => fmtMD(items[0].label),
+                        label: ctx => ctx.parsed.y === null ? null : `${ctx.dataset.label}: ${ctx.parsed.y} hrs so far`
+                    }}
+                },
+                scales:{
+                    // One tick per month start; the axis carries every day.
+                    x:{ ticks:{ color:C.mid, autoSkip:false, maxRotation:0,
+                                callback:(v,i) => yearOverYear.axis[i].endsWith('-01') ? MON[+yearOverYear.axis[i].slice(0,2)-1] : null },
+                        grid:{ display:false } },
+                    y:{ beginAtZero:true, title:{ display:true, text:'Cumulative hours', color:C.black },
+                        ticks:{ color:C.mid, callback:v => v+' h' }, grid:{ color:'rgba(0,0,0,0.04)' } }
+                }
+            },
+            plugins:[{ id:'yoyEndLabels', afterDatasetsDraw(chart){
+                // Name each line where it ends, so identity never rests on colour alone.
+                const ctx = chart.ctx;
+                chart.data.datasets.forEach((ds, di) => {
+                    const meta = chart.getDatasetMeta(di);
+                    if (meta.hidden) return;
+                    let j = ds.data.length - 1; while (j >= 0 && ds.data[j] === null) j--;
+                    if (j < 0) return;
+                    const pt = meta.data[j];
+                    ctx.save(); ctx.fillStyle = ink(C.dark); ctx.font = '600 11px sans-serif';
+                    ctx.textBaseline = 'middle'; ctx.fillText(ds.label, pt.x + 6, pt.y); ctx.restore();
+                });
+            }}]
+        });
+        const t = yearOverYear.todayIdx, cur = Y[Y.length-1], prev = Y[Y.length-2];
+        const a = cur.data[t], b = prev.data[t];
+        const md = fmtMD(yearOverYear.axis[t]);
+        document.getElementById('yoyTakeaway').innerHTML = `
+            <div><div class="k">${cur.year} through ${md}</div><div class="v">${a} h</div></div>
+            <div><div class="k">${prev.year} by ${md}</div><div class="v">${b} h</div></div>
+            <div><div class="k">Difference</div><div class="v ${a>=b?'up':''}">${b ? signed(Math.round(100*(a/b-1)),'%') : '—'}</div></div>
+            <div><div class="k">${prev.year} full year</div><div class="v">${prev.total} h</div></div>`;
+    })();
+
     // 12 · Time of day
     (()=>{
         const barColors = timeOfDay.counts.map((_,h) => {
@@ -3088,6 +3390,16 @@ function renderDashboard(data, lastModified) {
 // ─────────────────────────────────────────────────────────────
 //  BOOT
 // ─────────────────────────────────────────────────────────────
+// The discipline specs carry functions (how to read performance, how to format
+// it), and JSON drops functions, so a cached copy comes back without them.
+// Re-attach the live specs before rendering from cache.
+function rehydrate(data) {
+    DISCIPLINE_SPECS.forEach(sp => {
+        if (data.disciplineStats && data.disciplineStats[sp.key]) data.disciplineStats[sp.key].spec = sp;
+    });
+    return data;
+}
+
 async function boot() {
     showLoading();
 
@@ -3102,7 +3414,7 @@ async function boot() {
             const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
             if (cached?.data) {
                 console.warn('CSV fetch failed; using cache:', fetchErr.message);
-                renderDashboard(cached.data, cached.lastModified);
+                renderDashboard(rehydrate(cached.data), cached.lastModified);
                 return;
             }
         } catch (_) {}
@@ -3114,14 +3426,18 @@ async function boot() {
     const missing = validateColumns(rows);
     if (missing.length) { showValidationError(missing); return; }
 
+    // Only the cache read is guarded. A render error used to be swallowed here
+    // too, which silently re-processed everything and hid the failure.
+    let hit = null;
     try {
         const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
-        if (cached?.lastModified === lastModified && cached?.rowCount === rows.length) {
-            console.log('Cache hit — skipping re-processing.');
-            renderDashboard(cached.data, cached.lastModified);
-            return;
-        }
+        if (cached?.lastModified === lastModified && cached?.rowCount === rows.length) hit = cached;
     } catch (_) {}
+    if (hit) {
+        console.log('Cache hit — skipping re-processing.');
+        renderDashboard(rehydrate(hit.data), hit.lastModified);
+        return;
+    }
 
     const processed = processData(rows);
     try {

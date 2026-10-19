@@ -122,7 +122,7 @@ still copied into every page, so keep those copies in sync.
 ## Data and caching
 
 - Both dashboards cache processed data in `localStorage` under a versioned key
-  (`CACHE_KEY` near the top of each script, e.g. `peloton_cache_v15`,
+  (`CACHE_KEY` near the top of each script, e.g. `peloton_cache_v16`,
   `lastfm_cache_v2`), invalidated automatically by the file's
   `Last-Modified` and row count. Bump the version **only** when the processed
   data's shape changes, not for styling or chart changes, since a bump makes
