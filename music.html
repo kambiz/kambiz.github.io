@@ -1326,10 +1326,10 @@ function renderDashboard(D, lastModified) {
     </div>
 
     <div class="two-col">
-        <div class="chart-container">
+        <div class="chart-container tall">
             <h2>New artists found vs. how much of the year was new</h2>
             <p class="description">
-                Bars: artists heard for the first time that year. Line: the share of
+                Top: artists heard for the first time that year. Bottom: the share of
                 that year's plays that went to those new arrivals.
             </p>
             <canvas id="discoveryChart"></canvas>
@@ -1981,13 +1981,19 @@ function drawDiscovery(D) {
                     ? `${c.raw.toFixed(1)}% of plays were first-year artists`
                     : `${comma(c.raw)} artists heard for the first time` } }
             },
+            // Two stacked panels on one year axis, each with its own scale, rather
+            // than one plot with left and right axes: where two lines cross on a
+            // dual-axis chart depends only on how the scales were set.
+            // Higher weight sits on top; stackWeight sets the share of height.
             scales:{
                 x:{ grid:{ display:false } },
-                y:{ beginAtZero:true, position:'left', grid:GRID,
+                y:{ beginAtZero:true, position:'left', stack:'panels', offset:true,
+                    weight:2, stackWeight:1, grid:GRID,
                     title:{ display:true, text:'New artists' } },
-                y1:{ beginAtZero:true, position:'right', grid:{ display:false },
-                     title:{ display:true, text:'% of year that was new', color:C.red },
-                     ticks:{ color:C.red, callback:v => v + '%' } }
+                y1:{ beginAtZero:true, position:'left', stack:'panels', offset:true,
+                     weight:1, stackWeight:1, grid:GRID,
+                     title:{ display:true, text:'% of year new' },
+                     ticks:{ callback:v => v + '%' } }
             }
         }
     });

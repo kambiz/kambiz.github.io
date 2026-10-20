@@ -153,6 +153,9 @@ a { color:inherit; text-underline-offset:2px; }
 .three-col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:24px; }
 
 canvas { max-height:400px; max-width:100%; }
+/* Stacked-panel charts carry two plots, so they get the room of two. */
+canvas.panels { max-height:560px; }
+canvas.panels3 { max-height:720px; }
 
 /* ── Insight box ── */
 .insight-box {
@@ -235,6 +238,8 @@ canvas { max-height:400px; max-width:100%; }
     .three-col { grid-template-columns:1fr; }
     .chart-container { padding:18px 14px; }
     canvas { max-height:300px; }
+    canvas.panels { max-height:460px; }
+    canvas.panels3 { max-height:680px; }
     .takeaway div { flex:1 1 50%; border-left:0; padding:6px 0; }
     .section-head h2 { font-size:1.15em; }
     .tabs { flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; }
@@ -857,6 +862,30 @@ function monthRange(keys) {
     }
 }
 
+// ── Stacked panels ───────────────────────────────────────────
+// Two measures in different units each get a panel of their own, one above
+// the other on a shared x axis, rather than sharing a plot on left and right
+// axes, where any crossing or gap between the lines is an artefact of how the
+// two scales were set. Hover still reports both for the same x.
+// panelStack takes the panels top-first as [scaleId, config, share of height];
+// in Chart.js the higher weight sits on top. panelScales is the two-panel case.
+const PANEL_ASPECT = (n = 2) => window.innerWidth < 700 ? (n > 2 ? 0.5 : 0.9) : (n > 2 ? 1.15 : 1.6);
+function panelStack(panels) {
+    return Object.fromEntries(panels.map(([id, cfg, stackWeight], i) => [id, {
+        ...cfg, position:'left', stack:'panels', offset:true,
+        weight: panels.length - i, stackWeight,
+        title: { display:true, color:C.black, ...(cfg.title || {}) },
+        ticks: { color:C.mid, ...(cfg.ticks || {}) },
+        grid:  { color:'rgba(0,0,0,0.04)', ...(cfg.grid || {}) }
+    }]));
+}
+// A short panel's vertical title can be taller than the panel on a phone and
+// run into its tick labels; the ticks carry the unit, so a short name will do.
+const panelTitle = (full, short) => window.innerWidth < 700 ? short : full;
+function panelScales(top, bottom, ratio = [3, 2]) {
+    return panelStack([['y', top, ratio[0]], ['y1', bottom, ratio[1]]]);
+}
+
 // Least-squares fit over indexed points; returns y-values for a straight trend line.
 // Index is position on the axis, so the axis must be evenly spaced in time.
 function linearTrend(values) {
@@ -1264,14 +1293,6 @@ function processData(rows) {
         })).filter(sv => sv.data.some(v => v > 0))
     };
 
-    // Cycling HR zones — cycling only, for the same reason as above.
-    const HR_BINS   = [0,120,135,145,155,165,Infinity];
-    const HR_LABELS = ['< 120','120–135','135–145','145–155','155–165','165+'];
-    const hrZoneCounts = Array(HR_LABELS.length).fill(0);
-    effort.forEach(r=>{ const h=num(r,'Avg. Heartrate'); if(h===null) return;
-        for(let i=0;i<HR_BINS.length-1;i++) if(h>=HR_BINS[i]&&h<HR_BINS[i+1]){ hrZoneCounts[i]++; break; }
-    });
-    const hrZones = { labels:HR_LABELS, counts:hrZoneCounts };
 
     // ── Volume & habit views ───────────────────────────────────
     const hourBins = Array(24).fill(0);
@@ -1504,7 +1525,7 @@ function processData(rows) {
                 `eff ${progression.effEarly}→${progression.effNow} W/bpm · streak ${longestStreak}d`);
 
     return { stats, longestStreak, disciplines, instructors,
-             disciplineStats, cadenceResistance, speedIncline, hrZones, timeOfDay,
+             disciplineStats, cadenceResistance, speedIncline, timeOfDay,
              monthlyHours, partialNote, zoneEvolution, zoneMix, POWER_ZONES,
              effIndex, byClassType, weeklyLoad, calendar, calSummary,
              streakOngoing, warmCool, yearOverYear, bestEfforts };
@@ -1551,24 +1572,20 @@ function disciplineSectionHTML(ds, notes) {
     if (ds.hasTrend) {
         html += `
         <div class="chart-container feature">
-            <h2>${S.perfName} &amp; Heart Rate Over Time (${S.label})</h2>
-            <div class="description">Left axis: time-weighted avg. ${S.perfName.toLowerCase()} &nbsp;|&nbsp; Right axis: avg. heart rate for this discipline only &nbsp;|&nbsp; Error bars: ±1 SD</div>
-            <canvas id="${k}TrendChart"></canvas>
+            <h2>${S.perfName}, Heart Rate &amp; Efficiency Over Time (${S.label})</h2>
+            <div class="description">Top: time-weighted avg. ${S.perfName.toLowerCase()} &nbsp;|&nbsp; Middle: avg. heart rate for this discipline only &nbsp;|&nbsp; Bottom: ${S.effName.toLowerCase()}, with its trend &nbsp;|&nbsp; Error bars: ±1 SD</div>
+            <canvas id="${k}TrendChart" class="panels3"></canvas>
             <div class="takeaway" id="${k}Takeaway"></div>
-            ${notes.trend ? `<div class="method-note">${notes.trend}</div>` : ''}
-        </div>
-
-        <div class="chart-container feature">
-            <h2>Aerobic Efficiency — ${S.effName} (${S.label})</h2>
-            <div class="description">${S.perfName} ÷ heart rate, computed per session then averaged. Rising = more ${S.perfName.toLowerCase()} for the same cardiovascular cost</div>
-            <canvas id="${k}EffChart"></canvas>
             <div class="method-note">
-                ${S.label} covered ${sum.perfPct >= 0 ? 'a' : 'a'} ${Math.abs(sum.perfPct)}%
+                The bottom panel is ${S.perfName.toLowerCase()} ÷ heart rate, computed per session then
+                averaged: rising means more ${S.perfName.toLowerCase()} for the same cardiovascular cost.
+                ${S.label} covered a ${Math.abs(sum.perfPct)}%
                 ${sum.perfPct >= 0 ? 'gain' : 'drop'} in ${S.perfName.toLowerCase()}
                 (${S.fmt(sum.perfEarly)} → ${S.fmt(sum.perfNow)}) ${hrWord}
                 (${sum.hrEarly} → ${sum.hrNow} bpm), for an efficiency change of
-                <b>${sum.effPct >= 0 ? '+' : ''}${sum.effPct}%</b>.
+                <b>${signed(sum.effPct,'%')}</b>.
                 Comparison is the first ${sum.windowSize} qualifying sessions against the most recent ${sum.windowSize}.
+                ${notes.trend ? `<br><br>${notes.trend}` : ''}
             </div>
         </div>`;
     }
@@ -1595,8 +1612,8 @@ function disciplineSectionHTML(ds, notes) {
         html += `
         <div class="chart-container">
             <h2>${S.perfName} by Class Type (${S.label})</h2>
-            <div class="description">Average ${S.perfName.toLowerCase()} per Peloton class type, with average heart rate alongside — types with ${TYPE_MIN_SESSIONS}+ sessions</div>
-            <canvas id="${k}TypeChart"></canvas>
+            <div class="description">Average ${S.perfName.toLowerCase()} per Peloton class type, with average heart rate below — types with ${TYPE_MIN_SESSIONS}+ sessions</div>
+            <canvas id="${k}TypeChart" class="panels"></canvas>
             <div class="method-note">${notes.byType}</div>
         </div>`;
     }
@@ -1626,7 +1643,7 @@ function disciplineSectionHTML(ds, notes) {
     return html;
 }
 
-// Bars are the performance metric, the line is heart rate on a second axis —
+// Bars are the performance metric, dots below are heart rate in their own panel —
 // so a type that is merely harder is distinguishable from one that is faster
 // for the same effort.
 function drawClassTypeChart(canvasId, rows, S) {
@@ -1638,7 +1655,9 @@ function drawClassTypeChart(canvasId, rows, S) {
             datasets:[
                 { type:'bar', label:S.perfName, data: rows.map(r => S.toDisplay(r.mean)),
                   backgroundColor: grayRamp(rows.length), borderWidth:0, yAxisID:'y', order:2 },
-                { type:'line', label:'Avg. heart rate', data: rows.map(r => r.hr),
+                // Dots, not a line: class types are separate categories, and a
+                // line between them would imply a progression that isn't there.
+                { type:'line', label:'Avg. heart rate', data: rows.map(r => r.hr), showLine:false,
                   borderColor:C.red, backgroundColor:C.red, borderWidth:2, tension:0,
                   pointRadius:4, pointBackgroundColor:C.red, pointBorderColor:'#fff',
                   pointBorderWidth:1.5, fill:false, yAxisID:'y1', order:1 }
@@ -1655,13 +1674,14 @@ function drawClassTypeChart(canvasId, rows, S) {
                         : `Heart rate: ${ctx.parsed.y} bpm`
                 }}
             },
+            aspectRatio:PANEL_ASPECT(),
             scales:{
                 x:{ ticks:{color:C.mid,maxRotation:35,minRotation:35,font:{size:10}}, grid:{display:false} },
-                y:{ position:'left', beginAtZero:false,
-                    title:{display:true,text:S.perfAxis,color:C.black},
-                    ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
-                y1:{ position:'right', title:{display:true,text:'Heart rate (bpm)',color:C.red},
-                     ticks:{color:C.red,callback:v=>v+' bpm'}, grid:{drawOnChartArea:false} }
+                ...panelScales(
+                    // Zero-based: a bar's length is its value, so a cut-off baseline
+                    // would exaggerate every gap between class types.
+                    { beginAtZero:true, title:{text:S.perfAxis} },
+                    { title:{text:'Heart rate (bpm)'}, ticks:{callback:v=>v+' bpm'}, grace:'10%' })
             }
         }
     });
@@ -1687,7 +1707,15 @@ function drawDisciplineCharts(ds) {
                 { label:'Heart Rate (bpm)', data:t.hr, yAxisID:'y1',
                   borderColor:C.red, backgroundColor:'rgba(192,57,43,0.05)',
                   fill:false, tension:0.4, borderWidth:2,
-                  pointRadius:4, pointBackgroundColor:C.red, pointBorderColor:'#fff', pointBorderWidth:2 }
+                  pointRadius:4, pointBackgroundColor:C.red, pointBorderColor:'#fff', pointBorderWidth:2 },
+                // Efficiency is performance ÷ heart rate, so it sits under both.
+                { label:S.effName, data:ds.efficiency.value, yAxisID:'y2',
+                  borderColor:'#555', backgroundColor:'#555',
+                  fill:false, tension:0.35, borderWidth:2,
+                  pointRadius:3.5, pointBackgroundColor:'#555', pointBorderColor:'#fff', pointBorderWidth:1.5 },
+                { label:'Efficiency trend', data:ds.efficiency.trend, yAxisID:'y2',
+                  borderColor:'#999', borderWidth:1.8, borderDash:[6,4],
+                  fill:false, pointRadius:0, tension:0 }
             ]},
             options:{
                 responsive:true, interaction:{mode:'index',intersect:false},
@@ -1698,20 +1726,25 @@ function drawDisciplineCharts(ds) {
                         label: ctx => {
                             const i=ctx.dataIndex, v=ctx.parsed.y;
                             if (v===null) return null;
-                            return ctx.datasetIndex===0
-                                ? `${S.perfName}: ${S.fmt(t.perf[i])}`
-                                : `Heart rate: ${v.toFixed(1)} bpm ±${t.hrStd[i].toFixed(1)}`;
+                            return [
+                                `${S.perfName}: ${S.fmt(t.perf[i])}`,
+                                `Heart rate: ${v.toFixed(1)} bpm ±${(t.hrStd[i] ?? 0).toFixed(1)}`,
+                                `Efficiency: ${v.toFixed(3)} ${S.effUnit}`,
+                                `Trend: ${v.toFixed(3)} ${S.effUnit}`
+                            ][ctx.datasetIndex];
                         }
                     }}
                 },
+                aspectRatio:PANEL_ASPECT(3),
                 scales:{
                     x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                    y:{ type:'linear', position:'left',
-                        title:{display:true,text:S.perfAxis,color:C.black},
-                        ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
-                    y1:{ type:'linear', position:'right', min:hrLo, max:hrHi,
-                         title:{display:true,text:'Heart Rate (bpm)',color:C.red},
-                         ticks:{color:C.red,callback:v=>v+' bpm'}, grid:{drawOnChartArea:false} }
+                    ...panelStack([
+                        ['y',  { type:'linear', title:{text:S.perfAxis} }, 3],
+                        ['y1', { type:'linear', min:hrLo, max:hrHi,
+                                 title:{text:panelTitle('Heart rate (bpm)', 'HR')}, ticks:{callback:v=>v+' bpm'} }, 2],
+                        ['y2', { type:'linear', grace:'5%', title:{text:S.effName},
+                                 ticks:{callback:v=>v.toFixed(2)} }, 2]
+                    ])
                 }
             },
             plugins:[{ afterDatasetsDraw(chart){
@@ -1720,7 +1753,10 @@ function drawDisciplineCharts(ds) {
                     const meta=chart.getDatasetMeta(mi), ys=chart.scales[scaleId];
                     meta.data.forEach((pt,i)=>{
                         if(means[i]===null) return;
-                        const x=pt.x, yT=ys.getPixelForValue(means[i]+stds[i]), yB=ys.getPixelForValue(means[i]-stds[i]);
+                        // Clamped to the bar's own panel, so a wide spread in a thin
+                        // month can't run into the panel above or below.
+                        const clamp = y => Math.min(ys.bottom, Math.max(ys.top, y));
+                        const x=pt.x, yT=clamp(ys.getPixelForValue(means[i]+stds[i])), yB=clamp(ys.getPixelForValue(means[i]-stds[i]));
                         ctx.save(); ctx.strokeStyle=ink(color); ctx.lineWidth=1.2;
                         [[x,yT,x,yB],[x-3,yT,x+3,yT],[x-3,yB,x+3,yB]].forEach(([x1,y1,x2,y2])=>{
                             ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
@@ -1742,35 +1778,6 @@ function drawDisciplineCharts(ds) {
             <div><div class="k">${S.effName}</div><div class="v ${sum.effPct>=0?'up':''}">${sum.effEarly} → ${sum.effNow}</div></div>
             <div><div class="k">Efficiency change</div><div class="v ${sum.effPct>=0?'up':''}">${sum.effPct>=0?'+':''}${sum.effPct}%</div></div>`;
 
-        // ── Efficiency with least-squares trend ────────────────
-        new Chart(document.getElementById(`${k}EffChart`),{
-            type:'line',
-            data:{ labels:ds.efficiency.labels, datasets:[
-                { label:S.effName, data:ds.efficiency.value,
-                  borderColor:C.black, backgroundColor:'rgba(0,0,0,0.06)',
-                  fill:true, tension:0.35, borderWidth:2,
-                  pointRadius:3.5, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:1.5 },
-                { label:'Trend', data:ds.efficiency.trend,
-                  borderColor:C.red, borderWidth:1.8, borderDash:[6,4],
-                  fill:false, pointRadius:0, tension:0 }
-            ]},
-            options:{
-                responsive:true, interaction:{mode:'index',intersect:false},
-                plugins:{
-                    legend:{ position:'top', labels:{color:C.mid,font:{size:11}} },
-                    tooltip:{ callbacks:{
-                        title: items => `${items[0].label} · ${nRides(ds.efficiency.count[items[0].dataIndex], 'session')}`,
-                        label: ctx => ctx.parsed.y===null ? null
-                            : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(3)} ${S.effUnit}`
-                    }}
-                },
-                scales:{
-                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                    y:{ title:{display:true,text:S.effName,color:C.black},
-                        ticks:{color:C.mid,callback:v=>v.toFixed(2)}, grid:{color:'rgba(0,0,0,0.04)'} }
-                }
-            }
-        });
     }
 
     // ── Performance at constant session length ─────────────────
@@ -1911,7 +1918,7 @@ function drawDisciplineCharts(ds) {
 // ─────────────────────────────────────────────────────────────
 function renderDashboard(data, lastModified) {
     const { stats, longestStreak, disciplines, instructors,
-            disciplineStats, cadenceResistance, speedIncline, hrZones, timeOfDay,
+            disciplineStats, cadenceResistance, speedIncline, timeOfDay,
             monthlyHours, partialNote, zoneEvolution, zoneMix, POWER_ZONES,
             effIndex, byClassType, weeklyLoad, calendar, calSummary,
             streakOngoing, warmCool, yearOverYear, bestEfforts } = data;
@@ -2014,36 +2021,30 @@ function renderDashboard(data, lastModified) {
            &nbsp;|&nbsp; ${Math.round(cycling.totalMinutes/60)} hours all-in</div>
 
         <div class="chart-container feature">
-            <h2>Power Output &amp; Heart Rate Over Time (Cycling)</h2>
-            <div class="description">Left axis: time-weighted avg. power (W) &nbsp;|&nbsp; Right axis: avg. <b>cycling</b> heart rate (bpm) &nbsp;|&nbsp; Error bars: ±1 SD</div>
-            <canvas id="combinedChart"></canvas>
+            <h2>Power, Heart Rate &amp; Efficiency Over Time (Cycling)</h2>
+            <div class="description">Top: time-weighted avg. power (W) &nbsp;|&nbsp; Middle: avg. <b>cycling</b> heart rate (bpm) &nbsp;|&nbsp; Bottom: watts per heartbeat, with its trend &nbsp;|&nbsp; Error bars: ±1 SD</div>
+            <canvas id="combinedChart" class="panels3"></canvas>
             <div class="takeaway" id="combinedTakeaway"></div>
             <div class="method-note">
+                <b>The bottom panel is the one that matters.</b> Watts per heartbeat is average watts ÷
+                average heart rate, computed per ride then averaged. Power and heart rate can each drift for
+                reasons unrelated to fitness — a harder class, a hot room, poor sleep — but their
+                <b>ratio</b> is the thing training actually moves. A flat power line over a falling heart
+                rate and a rising power line over a flat heart rate are the same underlying win, and the
+                bottom panel scores both identically.
+                <br><br>
                 <b>Two corrections vs. the earlier version of this chart.</b>
-                (1) The heart-rate line now averages <b>cycling sessions only</b>. Previously it averaged
+                (1) The heart-rate line averages <b>cycling sessions only</b>. Previously it averaged
                 every discipline, so a growing meditation habit (~67 bpm) and yoga (~86 bpm) pulled the
                 line down from ~145 to ~105 bpm — that decline was a change in what was being averaged,
                 not a change in cardiovascular fitness. Cycling heart rate has actually been broadly flat.
-                (2) Power now excludes warm-up and cool-down rides, which were
+                (2) Power excludes warm-up and cool-down rides, which were
                 ${warmCool.pct}% of all logged rides in ${warmCool.year}. Neither is comparable with a
                 training ride: in ${warmCool.year} warm-ups averaged ${warmCool.warmW ?? '—'}W and
                 cool-downs ${warmCool.coolW ?? '—'}W, so leaving them in would make the line track how
                 often each was tacked on rather than fitness. Outdoor rides
                 (${stats.noPowerRides} of them) are also excluded from power figures: they record heart
                 rate but no wattage, so they land at 0W and pull the average down for no real reason.
-            </div>
-        </div>
-
-        <div class="chart-container feature">
-            <h2>Aerobic Efficiency — Watts per Heartbeat</h2>
-            <div class="description">Average watts ÷ average heart rate, computed per ride then averaged. Rising = more power for the same cardiovascular cost</div>
-            <canvas id="efficiencyChart"></canvas>
-            <div class="method-note">
-                This is the single number behind the trend you care about. Power and heart rate can each
-                drift for reasons unrelated to fitness — a harder class, a hot room, poor sleep — but their
-                <b>ratio</b> is the thing training actually moves. A flat power line paired with a falling
-                heart rate and a rising power line paired with a flat heart rate are the same underlying win,
-                and this chart scores both identically.
             </div>
         </div>
 
@@ -2118,8 +2119,8 @@ function renderDashboard(data, lastModified) {
 
         <div class="chart-container">
             <h2>How the Power Gets Made — Cadence vs. Resistance</h2>
-            <div class="description">Left axis: avg. cadence (RPM) &nbsp;|&nbsp; Right axis: avg. resistance (%)</div>
-            <canvas id="cadenceChart"></canvas>
+            <div class="description">Top: avg. cadence (RPM) &nbsp;|&nbsp; Bottom: avg. resistance (%)</div>
+            <canvas id="cadenceChart" class="panels"></canvas>
             <div class="method-note">
                 Power is cadence × torque, so the same watts can come from spinning faster or from pushing
                 a heavier gear. Tracking both shows <em>how</em> the extra power is being produced, and
@@ -2185,8 +2186,8 @@ function renderDashboard(data, lastModified) {
         ${byClassType.cycling ? `
         <div class="chart-container">
             <h2>Power by Class Type (Cycling)</h2>
-            <div class="description">Average watts per Peloton class type, with average heart rate alongside — types with ${TYPE_MIN_SESSIONS}+ rides</div>
-            <canvas id="cyclingTypeChart"></canvas>
+            <div class="description">Average watts per Peloton class type, with average heart rate below — types with ${TYPE_MIN_SESSIONS}+ rides</div>
+            <canvas id="cyclingTypeChart" class="panels"></canvas>
             <div class="method-note">
                 Class types are prescriptive, so this is mostly a picture of what each class asks for
                 rather than of form. The useful consequence is that <b>a blended average-watts figure
@@ -2204,12 +2205,6 @@ function renderDashboard(data, lastModified) {
                             ${Math.round(t[0].mean - t[t.length-1].mean)}W apart.`; })()}
             </div>
         </div>` : ''}
-
-        <div class="chart-container">
-            <h2>Cycling Heart Rate Zone Distribution</h2>
-            <div class="description">Effort rides by average heart rate — cycling only</div>
-            <canvas id="hrZoneChart"></canvas>
-        </div>
 
         </div><!-- /panel-cycling -->
 
@@ -2254,8 +2249,8 @@ function renderDashboard(data, lastModified) {
         ${disciplineStats.running.hasTrend ? `
         <div class="chart-container">
             <h2>How the Pace Gets Made — Speed vs. Incline (Running)</h2>
-            <div class="description">Left axis: avg. speed (mph) &nbsp;|&nbsp; Right axis: avg. incline (%)</div>
-            <canvas id="speedInclineChart"></canvas>
+            <div class="description">Top: avg. speed (mph) &nbsp;|&nbsp; Bottom: avg. incline (%)</div>
+            <canvas id="speedInclineChart" class="panels"></canvas>
             <div class="method-note">
                 The running counterpart to cadence-vs-resistance on the bike. The same pace is far harder
                 uphill, so speed alone can flatter or punish a month unfairly; tracking the grade alongside
@@ -2282,20 +2277,14 @@ function renderDashboard(data, lastModified) {
             <p>How much, how often, and what kind — across all ${stats.totalWorkouts.toLocaleString()} logged sessions.</p>
         </div>
 
-        <div class="chart-container">
-            <h2>Where the Time Goes</h2>
-            <div class="description">Hours spent per discipline, with session counts on the second axis</div>
-            <canvas id="disciplineChart"></canvas>
-        </div>
-
         <div class="chart-container feature">
             <h2>How the Training Mix Has Shifted</h2>
-            <div class="description">Hours per month by discipline &nbsp;|&nbsp; red = walking, running, rowing &nbsp;|&nbsp; <span class="ink-word"></span> = cycling &nbsp;|&nbsp; grey = yoga, stretching, meditation${partialNote ? ` &nbsp;|&nbsp; ${partialNote} omitted as a partial month` : ''}</div>
-            <canvas id="mixChart"></canvas>
+            <div class="description">Hours per month by discipline &nbsp;|&nbsp; red = walking, running, rowing &nbsp;|&nbsp; <span class="ink-word"></span> = cycling &nbsp;|&nbsp; grey = yoga, stretching, meditation &nbsp;|&nbsp; legend: all-time hours / sessions${partialNote ? ` &nbsp;|&nbsp; ${partialNote} omitted as a partial month` : ''}</div>
+            <canvas id="mixChart" class="panels"></canvas>
             <div class="method-note">
                 Bars are stacked hours, so total height is total training volume and each band is
-                its share of it. The dashed line is cycling's percentage of the month's hours, read
-                on the right axis — when it falls in a month where total volume held or rose, that is a
+                its share of it. The panel below is cycling's percentage of the month's hours —
+                when it falls in a month where total volume held or rose, that is a
                 genuine change of emphasis rather than a quiet month on the bike.
                 ${partialNote ? `<b>${partialNote}</b> is left out: the export stops partway through it,
                 so its bar would show a collapse in elapsed days rather than in training.` : ''}
@@ -2322,8 +2311,8 @@ function renderDashboard(data, lastModified) {
 
         <div class="chart-container">
             <h2>Workout Time of Day</h2>
-            <div class="description">Bars: all sessions by hour &nbsp;|&nbsp; Line: average cycling power in that part of the day</div>
-            <canvas id="timeOfDayChart"></canvas>
+            <div class="description">Top: all sessions by hour &nbsp;|&nbsp; Bottom: average cycling power in that part of the day</div>
+            <canvas id="timeOfDayChart" class="panels"></canvas>
             <div class="method-note">
                 Power is averaged in three-hour blocks, not single hours — one hour splits the effort
                 rides too thin to mean anything — and a block is left blank below 15 rides.
@@ -2343,8 +2332,8 @@ function renderDashboard(data, lastModified) {
 
         <div class="chart-container feature">
             <h2>Weekly Load and Ramp Rate</h2>
-            <div class="description">Bars: hours trained each week &nbsp;|&nbsp; Line: that week against the trailing ${ACWR_CHRONIC_WEEKS}-week average</div>
-            <canvas id="loadChart"></canvas>
+            <div class="description">Top: hours trained each week &nbsp;|&nbsp; Bottom: that week against the trailing ${ACWR_CHRONIC_WEEKS}-week average</div>
+            <canvas id="loadChart" class="panels"></canvas>
             <div class="method-note">
                 The ratio compares one week's hours to the four before it. Around 1.0 is steady; a sharp
                 ramp (roughly 1.5 and above) is the pattern most often associated with picking up an
@@ -2424,7 +2413,7 @@ function renderDashboard(data, lastModified) {
         //  FITNESS PROGRESSION CHARTS
         // ═══════════════════════════════════════════════════════════
 
-        // 1 · Flagship: power + cycling HR, dual axis with ±1 SD error bars
+        // 1 · Flagship: power, cycling HR and their ratio, three stacked panels
         (()=>{
             new Chart(document.getElementById('combinedChart'),{
                 type:'line',
@@ -2440,6 +2429,19 @@ function renderDashboard(data, lastModified) {
                         borderColor:C.red, backgroundColor:'rgba(192,57,43,0.05)',
                         fill:false, tension:0.4, borderWidth:2,
                         pointRadius:4, pointBackgroundColor:C.red, pointBorderColor:'#fff', pointBorderWidth:2
+                    },
+                    // Efficiency is power ÷ heart rate per ride, so it sits directly
+                    // under the two lines it is made from.
+                    {
+                        label:'Watts per heartbeat', data:efficiency.value, yAxisID:'y2',
+                        borderColor:'#555', backgroundColor:'#555',
+                        fill:false, tension:0.35, borderWidth:2,
+                        pointRadius:3.5, pointBackgroundColor:'#555', pointBorderColor:'#fff', pointBorderWidth:1.5
+                    },
+                    {
+                        label:'Efficiency trend', data:efficiency.trend, yAxisID:'y2',
+                        borderColor:'#999', borderWidth:1.8, borderDash:[6,4],
+                        fill:false, pointRadius:0, tension:0
                     }
                 ]},
                 options:{
@@ -2451,24 +2453,25 @@ function renderDashboard(data, lastModified) {
                             label: ctx=>{
                                 const i=ctx.dataIndex, v=ctx.parsed.y;
                                 if(v===null) return null;
-                                return ctx.datasetIndex===0
-                                    ? `Power: ${v.toFixed(1)} W ±${cyclingTrend.powerStd[i].toFixed(1)}`
-                                    : `Cycling HR: ${v.toFixed(1)} bpm ±${cyclingTrend.hrStd[i].toFixed(1)}`;
+                                return [
+                                    `Power: ${v.toFixed(1)} W ±${(cyclingTrend.powerStd[i] ?? 0).toFixed(1)}`,
+                                    `Cycling HR: ${v.toFixed(1)} bpm ±${(cyclingTrend.hrStd[i] ?? 0).toFixed(1)}`,
+                                    `Efficiency: ${v.toFixed(3)} W/bpm`,
+                                    `Trend: ${v.toFixed(3)} W/bpm`
+                                ][ctx.datasetIndex];
                             }
                         }}
                     },
+                    aspectRatio:PANEL_ASPECT(3),
                     scales:{
                         x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                        y:{
-                            type:'linear', position:'left', beginAtZero:true,
-                            title:{display:true,text:'Power (W)',color:C.black},
-                            ticks:{color:C.mid,callback:v=>v+'W'}, grid:{color:'rgba(0,0,0,0.04)'}
-                        },
-                        y1:{
-                            type:'linear', position:'right', min:100, max:180,
-                            title:{display:true,text:'Cycling Heart Rate (bpm)',color:C.red},
-                            ticks:{color:C.red,callback:v=>v+' bpm'}, grid:{drawOnChartArea:false}
-                        }
+                        ...panelStack([
+                            ['y',  { type:'linear', beginAtZero:true, title:{text:'Power (W)'}, ticks:{callback:v=>v+'W'} }, 3],
+                            ['y1', { type:'linear', min:100, max:180,
+                                     title:{text:panelTitle('Heart rate (bpm)', 'HR')}, ticks:{callback:v=>v+' bpm'} }, 2],
+                            ['y2', { type:'linear', grace:'5%', title:{text:'Watts per heartbeat'},
+                                     ticks:{callback:v=>v.toFixed(2)} }, 2]
+                        ])
                     }
                 },
                 plugins:[{ afterDatasetsDraw(chart){
@@ -2477,7 +2480,10 @@ function renderDashboard(data, lastModified) {
                         const meta=chart.getDatasetMeta(mi), ys=chart.scales[scaleId];
                         meta.data.forEach((pt,i)=>{
                             if(means[i]===null) return;
-                            const x=pt.x, yT=ys.getPixelForValue(means[i]+stds[i]), yB=ys.getPixelForValue(means[i]-stds[i]);
+                            // Clamped to the bar's own panel, so a wide spread in a thin
+                            // month can't run into the panel above or below.
+                            const clamp = y => Math.min(ys.bottom, Math.max(ys.top, y));
+                            const x=pt.x, yT=clamp(ys.getPixelForValue(means[i]+stds[i])), yB=clamp(ys.getPixelForValue(means[i]-stds[i]));
                             ctx.save(); ctx.strokeStyle=ink(color); ctx.lineWidth=1.2;
                             [[x,yT,x,yB],[x-3,yT,x+3,yT],[x-3,yB,x+3,yB]].forEach(([x1,y1,x2,y2])=>{
                                 ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
@@ -2490,40 +2496,6 @@ function renderDashboard(data, lastModified) {
                 }}]
             });
         })();
-
-        // 2 · Aerobic efficiency (W/bpm) with least-squares trend
-        new Chart(document.getElementById('efficiencyChart'),{
-            type:'line',
-            data:{ labels:efficiency.labels, datasets:[
-                {
-                    label:'Watts per heartbeat', data:efficiency.value,
-                    borderColor:C.black, backgroundColor:'rgba(0,0,0,0.06)',
-                    fill:true, tension:0.35, borderWidth:2,
-                    pointRadius:3.5, pointBackgroundColor:C.black, pointBorderColor:'#fff', pointBorderWidth:1.5
-                },
-                {
-                    label:'Trend', data:efficiency.trend,
-                    borderColor:C.red, borderWidth:1.8, borderDash:[6,4],
-                    fill:false, pointRadius:0, tension:0
-                }
-            ]},
-            options:{
-                responsive:true, interaction:{mode:'index',intersect:false},
-                plugins:{
-                    legend:{ position:'top', labels:{color:C.mid,font:{size:11}} },
-                    tooltip:{ callbacks:{
-                        title: items => `${items[0].label} · ${nRides(efficiency.count[items[0].dataIndex], 'effort ride')}`,
-                        label: ctx => ctx.parsed.y === null ? null
-                            : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(3)} W/bpm`
-                    }}
-                },
-                scales:{
-                    x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                    y:{ title:{display:true,text:'Watts per heartbeat',color:C.black},
-                        ticks:{color:C.mid,callback:v=>v.toFixed(2)}, grid:{color:'rgba(0,0,0,0.04)'} }
-                }
-            }
-        });
 
         // 3 · Power progression at constant ride length
         (()=>{
@@ -2687,12 +2659,12 @@ function renderDashboard(data, lastModified) {
                     tooltip:{ callbacks:{ label: ctx => ctx.parsed.y === null ? null
                         : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}` }}
                 },
+                aspectRatio:PANEL_ASPECT(),
                 scales:{
                     x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                    y:{ position:'left', title:{display:true,text:'Cadence (RPM)',color:C.black},
-                        ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
-                    y1:{ position:'right', title:{display:true,text:'Resistance (%)',color:C.red},
-                         ticks:{color:C.red,callback:v=>v+'%'}, grid:{drawOnChartArea:false} }
+                    ...panelScales(
+                        { title:{text:'Cadence (RPM)'}, grace:'5%' },
+                        { title:{text:'Resistance (%)'}, ticks:{callback:v=>v+'%'}, grace:'5%' }, [1, 1])
                 }
             }
         });
@@ -2923,24 +2895,6 @@ function renderDashboard(data, lastModified) {
                 }
             }
         });
-
-        // 8 · Cycling HR zones
-        new Chart(document.getElementById('hrZoneChart'),{
-            type:'bar',
-            data:{ labels:hrZones.labels, datasets:[{
-                data:hrZones.counts,
-                backgroundColor:grays.slice(0,hrZones.labels.length),
-                borderWidth:0
-            }]},
-            options:{ responsive:true,
-                plugins:{ legend:{display:false},
-                    tooltip:{ callbacks:{ label:ctx=>`${ctx.parsed.y} rides` }} },
-                scales:{
-                    y:{ beginAtZero:true, ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
-                    x:{ ticks:{color:C.mid,maxRotation:30,minRotation:30}, grid:{display:false} }
-                }
-            }
-        });
     }
 
     function drawRunningExtras() {
@@ -2965,12 +2919,12 @@ function renderDashboard(data, lastModified) {
                         tooltip:{ callbacks:{ label: ctx => ctx.parsed.y===null ? null
                             : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}` }}
                     },
+                    aspectRatio:PANEL_ASPECT(),
                     scales:{
                         x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                        y:{ position:'left', title:{display:true,text:'Speed (mph)',color:C.black},
-                            ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
-                        y1:{ position:'right', title:{display:true,text:'Incline (%)',color:C.red},
-                             ticks:{color:C.red,callback:v=>v+'%'}, grid:{drawOnChartArea:false} }
+                        ...panelScales(
+                            { title:{text:'Speed (mph)'}, grace:'5%' },
+                            { title:{text:'Incline (%)'}, ticks:{callback:v=>v+'%'}, beginAtZero:true }, [1, 1])
                     }
                 }
             });
@@ -3051,54 +3005,24 @@ function renderDashboard(data, lastModified) {
     // (Walking, running and rowing are drawn by the tab controller above, on
     //  first activation of their tab.)
 
-    // 9 · Discipline breakdown — hours (bars) + session count (line), one chart
-    //     replacing the former doughnut + calories bar + time bar trio.
-    (()=>{
-        const paired = disciplines.labels
-            .map((l,i)=>({ l, hrs:+(disciplines.minutes[i]/60).toFixed(1), n:disciplines.counts[i] }))
-            .sort((a,b)=>b.hrs-a.hrs);
-        new Chart(document.getElementById('disciplineChart'),{
-            data:{
-                labels: paired.map(p=>p.l),
-                datasets:[
-                    { type:'bar', label:'Hours', data:paired.map(p=>p.hrs), yAxisID:'y',
-                      backgroundColor:grayRamp(paired.length), borderWidth:0, order:2 },
-                    // tension 0 — these are unrelated categories, so a smoothed curve
-                    // would imply interpolation between them that doesn't exist
-                    { type:'line', label:'Sessions', data:paired.map(p=>p.n), yAxisID:'y1',
-                      borderColor:C.red, backgroundColor:C.red, borderWidth:2, tension:0,
-                      pointRadius:4, pointBackgroundColor:C.red, pointBorderColor:'#fff',
-                      pointBorderWidth:1.5, fill:false, order:1 }
-                ]
-            },
-            options:{
-                responsive:true, interaction:{mode:'index',intersect:false},
-                plugins:{
-                    legend:{ position:'top', labels:{color:C.mid,font:{size:11},usePointStyle:true} },
-                    tooltip:{ callbacks:{ label: ctx => ctx.datasetIndex===0
-                        ? `${ctx.parsed.y} hrs`
-                        : `${ctx.parsed.y.toLocaleString()} sessions` }}
-                },
-                scales:{
-                    x:{ ticks:{color:C.mid}, grid:{display:false} },
-                    y:{ beginAtZero:true, position:'left',
-                        title:{display:true,text:'Hours',color:C.black},
-                        ticks:{color:C.mid,callback:v=>v+' hrs'}, grid:{color:'rgba(0,0,0,0.04)'} },
-                    y1:{ beginAtZero:true, position:'right',
-                         title:{display:true,text:'Sessions',color:C.red},
-                         ticks:{color:C.red}, grid:{drawOnChartArea:false} }
-                }
-            }
-        });
-    })();
+    // All-time hours and sessions per mix group, for the mix chart's legend.
+    // "Other" is the same Strength + Cardio grouping the chart uses.
+    function lifetimeLabel(group) {
+        const names = group === 'Other' ? ['Strength','Cardio'] : [group];
+        let mins = 0, n = 0;
+        disciplines.labels.forEach((l,i) => { if (names.includes(l)) { mins += disciplines.minutes[i]; n += disciplines.counts[i]; } });
+        return `${group} · ${Math.round(mins/60).toLocaleString()} h / ${n.toLocaleString()}`;
+    }
 
     // 9b · Monthly training mix — stacked hours + cycling's share
     new Chart(document.getElementById('mixChart'),{
         data:{
             labels: monthlyHours.labels,
             datasets: [
+                // Each legend entry carries the discipline's all-time hours and
+                // sessions, which used to be a chart of its own ("Where the Time Goes").
                 ...monthlyHours.groups.map(g => ({
-                    type:'bar', label:g.label, data:g.data,
+                    type:'bar', name:g.label, label:lifetimeLabel(g.label), data:g.data,
                     backgroundColor:g.color, borderWidth:0, stack:'hrs', yAxisID:'y', order:2
                 })),
                 {
@@ -3118,7 +3042,7 @@ function renderDashboard(data, lastModified) {
                             if (ctx.parsed.y === null) return null;
                             if (ctx.dataset.type === 'line')
                                 return `Cycling share: ${ctx.parsed.y.toFixed(0)}%`;
-                            return ctx.parsed.y ? `${ctx.dataset.label}: ${ctx.parsed.y} hrs` : null;
+                            return ctx.parsed.y ? `${ctx.dataset.name}: ${ctx.parsed.y} hrs` : null;
                         },
                         footer: items => {
                             const tot = items.filter(i=>i.dataset.type!=='line')
@@ -3128,14 +3052,12 @@ function renderDashboard(data, lastModified) {
                     }
                 }
             },
+            aspectRatio:PANEL_ASPECT(),
             scales:{
                 x:{ stacked:true, ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                y:{ stacked:true, beginAtZero:true, position:'left',
-                    title:{display:true,text:'Hours in the month',color:C.black},
-                    ticks:{color:C.mid,callback:v=>v+' h'}, grid:{color:'rgba(0,0,0,0.04)'} },
-                y1:{ position:'right', min:0, max:100, beginAtZero:true,
-                     title:{display:true,text:'Cycling share of hours (%)',color:C.black},
-                     ticks:{color:C.mid,callback:v=>v+'%'}, grid:{drawOnChartArea:false} }
+                ...panelScales(
+                    { stacked:true, beginAtZero:true, title:{text:'Hours in the month'}, ticks:{callback:v=>v+' h'} },
+                    { min:0, max:100, title:{text:'Cycling share (%)'}, ticks:{callback:v=>v+'%', stepSize:50} })
             }
         }
     });
@@ -3226,16 +3148,14 @@ function renderDashboard(data, lastModified) {
                         return `Cycling power: ${ctx.parsed.y}W (${timeOfDay.blockCounts[ctx.dataIndex]} rides in this block)`;
                     }}}
                 },
+                aspectRatio:PANEL_ASPECT(),
                 scales:{
                     x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45}, grid:{display:false} },
-                    y:{ position:'left', beginAtZero:true,
-                        title:{display:true,text:'Sessions',color:C.black},
-                        ticks:{color:C.mid}, grid:{color:'rgba(0,0,0,0.04)'} },
-                    y1:{ position:'right',
-                         min: pw.length ? Math.floor((Math.min(...pw)-20)/10)*10 : 0,
-                         max: pw.length ? Math.ceil((Math.max(...pw)+20)/10)*10 : 100,
-                         title:{display:true,text:'Avg. cycling power (W)',color:C.red},
-                         ticks:{color:C.red,callback:v=>v+'W'}, grid:{drawOnChartArea:false} }
+                    ...panelScales(
+                        { beginAtZero:true, title:{text:'Sessions'} },
+                        { min: pw.length ? Math.floor((Math.min(...pw)-20)/10)*10 : 0,
+                          max: pw.length ? Math.ceil((Math.max(...pw)+20)/10)*10 : 100,
+                          title:{text:'Avg. cycling power (W)'}, ticks:{callback:v=>v+'W'} })
                 }
             }
         });
@@ -3275,15 +3195,14 @@ function renderDashboard(data, lastModified) {
                 scales:{
                     x:{ ticks:{color:C.mid,maxRotation:45,minRotation:45,autoSkip:true,maxTicksLimit:16},
                         grid:{display:false} },
-                    y:{ position:'left', beginAtZero:true,
-                        title:{display:true,text:'Hours in the week',color:C.black},
-                        ticks:{color:C.mid,callback:v=>v+' h'}, grid:{color:'rgba(0,0,0,0.04)'} },
-                    y1:{ position:'right', beginAtZero:true,
-                         max: Math.max(2, Math.ceil(Math.max(
-                             ...weeklyLoad.acwr.filter(v=>v!==null), 1.5) * 4) / 4),
-                         title:{display:true,text:'Acute : chronic ratio',color:C.black},
-                         ticks:{color:C.mid}, grid:{drawOnChartArea:false} }
-                }
+                    ...panelScales(
+                        { beginAtZero:true, title:{text:'Hours in the week'}, ticks:{callback:v=>v+' h'} },
+                        { beginAtZero:true,
+                          max: Math.max(2, Math.ceil(Math.max(
+                              ...weeklyLoad.acwr.filter(v=>v!==null), 1.5) * 4) / 4),
+                          title:{text:'Acute : chronic ratio'}, ticks:{stepSize:0.5} })
+                },
+                aspectRatio:PANEL_ASPECT()
             },
             plugins:[{ id:'acwrBands', beforeDatasetsDraw(chart){
                 // Shade the 0.8–1.5 corridor so "normal" is visible, not memorised.
