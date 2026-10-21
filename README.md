@@ -2,6 +2,21 @@
 
 This is a repository to host my homepage, https://kambiz.github.io/
 
+## Downloadable CV
+
+`/cv/` links a plain, print-style PDF of the CV (`cv/Kambiz-Kamrani-CV.pdf`). It's built from
+`tools/cv-pdf/cv.html`, a separate single-column layout with the same content as the web page.
+After changing the CV, update both files and rebuild the PDF:
+
+```sh
+bundle exec ruby -e "require 'jekyll'; Jekyll::Commands::Build.process({})"
+(cd _site && python3 -m http.server 8123 &)
+node tools/cv-pdf/build.mjs        # needs Playwright + Chromium and the Liberation Serif font
+```
+
+Commit the PDF and `tools/cv-pdf/source.sha256` together. The site check fails if the PDF is
+missing or doesn't match the page.
+
 ## Writing a blog post
 
 Add a Markdown file to `_posts/` named `YYYY-MM-DD-slug.md`:

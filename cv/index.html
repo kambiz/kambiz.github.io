@@ -33,6 +33,7 @@ permalink: /cv/
 })();
 </script>
 <title>Curriculum Vitae — Kambiz Kamrani, MD</title>
+<link rel="alternate" type="application/pdf" href="/cv/Kambiz-Kamrani-CV.pdf" title="Curriculum vitae (PDF)">
 <script src="/assets/js/chart-4.4.0.umd.js"></script>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -84,6 +85,13 @@ a:hover { opacity:.6; }
 .header .nav-link { font-size:.78em; color:var(--faint); }
 .header .nav-link a { color:var(--faint); }
 .header .nav-link .current { color:var(--muted); font-weight:600; }
+.pdf-link {
+  display:inline-flex; align-items:center; gap:8px; margin-top:18px;
+  border:2px solid var(--border-strong); padding:7px 15px;
+  font-size:.82em; font-weight:600; text-decoration:none; transition:background .15s;
+}
+.pdf-link:hover { opacity:1; background:var(--bg-alt); }
+.pdf-link svg { width:15px; height:15px; flex:none; }
 
 /* ── Stat cards ── */
 .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:48px; }
@@ -203,6 +211,10 @@ canvas { max-width:100%; display:block; }
     <span class="subtitle">Acute Care Surgeon &middot; Banner Medical Group &middot; Greater Phoenix, AZ</span>
     {% include nav.html current="CV" %}
   </div>
+  <a class="pdf-link" href="/cv/Kambiz-Kamrani-CV.pdf" type="application/pdf">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7.5 8 11l3.5-3.5M2.5 13.5h11"/></svg>
+    Download CV (PDF)
+  </a>
 </div>
 
 <!-- ── Stat cards ─────────────────────────────────────────────── -->

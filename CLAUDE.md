@@ -17,7 +17,8 @@ same check.
 | Page | File | Notes |
 |---|---|---|
 | `/` | `index.html` | Bio, theme-matched portrait (`assets/img/portrait-{light,dark}.webp`) |
-| `/cv/` | `cv/index.html` | Static content plus two Chart.js charts |
+| `/cv/` | `cv/index.html` | Static content plus two Chart.js charts, and a download link for the PDF |
+| `/cv/Kambiz-Kamrani-CV.pdf` | `cv/Kambiz-Kamrani-CV.pdf` | Plain print-style CV, built from `tools/cv-pdf/` (see below) |
 | `/blog/` | `blog/index.html` | Post list via Liquid. Hidden while `_posts/` is empty (see below) |
 | `/blog/<year>/<slug>/` | `_posts/*.md` | Rendered through `_layouts/post.html` |
 | `/exercise/` | `exercise.html` | Peloton dashboard from `kambizkamrani_workouts.csv` |
@@ -141,10 +142,40 @@ still copied into every page, so keep those copies in sync.
 - Chart.js is vendored at `assets/js/chart-4.4.0.umd.js`; don't switch back to
   a CDN (a failed CDN load blanks both dashboards).
 
+## The downloadable CV (PDF)
+
+`/cv/` links a PDF in a conventional single-column physician-CV layout: no
+charts, cards or colour, real text, standard section headings, clickable
+publication links, bookmarks and a tagged structure. Jekyll can't make PDFs,
+so it is a **committed build artifact**, made from a separate print layout.
+
+- **Content lives in two places.** `cv/index.html` is the web page;
+  `tools/cv-pdf/cv.html` is the print layout (Jekyll skips that folder). When
+  the CV's content changes, edit **both**, then rebuild and commit the PDF.
+  Education and training dates exist only in the career chart's script on the
+  page (not in its HTML), so they need the same care.
+- **Rebuild:** build the site, serve `_site`, then
+  `node tools/cv-pdf/build.mjs` (it takes the site URL, default
+  `http://127.0.0.1:8123`; Playwright + Chromium as for the site check). It
+  rewrites `cv/Kambiz-Kamrani-CV.pdf` and `tools/cv-pdf/source.sha256`.
+  Commit both. It needs the Liberation Serif font and says so if it's missing.
+- **The site check enforces it.** It fails if the link or PDF is missing, or if
+  `source.sha256` no longer matches a fingerprint of the page's text and link
+  targets (`tools/cv-pdf/source-hash.mjs`). Styling-only edits don't trigger
+  it; stat cards, nav, footer and charts are left out of the fingerprint.
+- **Contact details are deliberately absent** (email, phone, address, licence
+  numbers): none is on the site today, and the PDF is public. Add them only if
+  the user asks.
+- Keep the section headings' letter-spacing at `.08em` or less. Wider tracking
+  makes some text extractors read "EDUCATION" as "E D U C AT I O N", which
+  breaks résumé parsers.
+
 ## Config notes
 
 - `_config.yml` has no theme and no Minima config. Its only `defaults` entry
   gives posts `layout: post` and the permalink `/blog/:year/:title/`.
+- `tools/cv-pdf/` is under `exclude`: it holds the CV's print layout, which
+  must not be published as a page.
 - GitHub Pages renders Markdown files even without front matter, so any `.md`
   that shouldn't be public must be listed under `exclude` (as `README.md` and
   this file are).

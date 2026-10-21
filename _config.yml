@@ -31,3 +31,5 @@ exclude:
   - CLAUDE.md
   - vendor/
   - node_modules/
+  # Print layout for the downloadable CV; tools/cv-pdf/build.mjs renders it to cv/*.pdf
+  - tools/cv-pdf/
