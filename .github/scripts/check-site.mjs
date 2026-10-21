@@ -8,6 +8,8 @@
 // Set CHROMIUM_PATH to use a preinstalled Chromium instead of Playwright's.
 
 import { chromium } from 'playwright';
+import { readFileSync } from 'node:fs';
+import { cvSourceHash } from '../../tools/cv-pdf/source-hash.mjs';
 
 const BASE = process.argv[2] || 'http://127.0.0.1:8123';
 const PAGES = [
@@ -43,6 +45,23 @@ async function open(path, colorScheme) {
   return { context, page, problems };
 }
 
+// The CV page links a PDF built from tools/cv-pdf/cv.html. Check that the link
+// works, and that the PDF was built for the CV as it reads now: build.mjs
+// records a fingerprint of the page's content, and a changed page without a
+// rebuilt PDF would quietly serve an out-of-date CV.
+async function checkCvPdf(page, path) {
+  const href = await page.locator('a.pdf-link').first().getAttribute('href', { timeout: 2000 }).catch(() => null);
+  if (!href) return fail(path, 'no PDF download link (a.pdf-link) on the page');
+  const res = await fetch(new URL(href, BASE));
+  if (!res.ok) return fail(path, `${href} returned ${res.status}`);
+  const bytes = Buffer.from(await res.arrayBuffer());
+  if (bytes.subarray(0, 5).toString() !== '%PDF-') return fail(path, `${href} is not a PDF`);
+  if (bytes.length < 10_000) fail(path, `${href} is only ${bytes.length} bytes; the PDF looks empty`);
+  const recorded = readFileSync(new URL('../../tools/cv-pdf/source.sha256', import.meta.url), 'utf8').trim();
+  if (recorded !== await cvSourceHash(page))
+    fail(path, 'the CV page has changed since its PDF was built. Update tools/cv-pdf/cv.html to match, then run tools/cv-pdf/build.mjs (see CLAUDE.md).');
+}
+
 for (const { path, charts } of PAGES) {
   console.log(path);
   const light = await open(path, 'light');
@@ -50,6 +69,7 @@ for (const { path, charts } of PAGES) {
 
   const built = await page.evaluate(() => typeof Chart === 'undefined' ? 0 : Object.keys(Chart.instances).length);
   if (built < charts) fail(path, `expected at least ${charts} charts, found ${built}`);
+  if (path === '/cv/') await checkCvPdf(page, path);
 
   const before = await page.evaluate(SNAPSHOT);
   await page.click('#theme-toggle');
