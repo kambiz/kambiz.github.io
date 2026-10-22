@@ -163,14 +163,14 @@ so it is a **committed build artifact**, made from a separate print layout.
   `source.sha256` no longer matches a fingerprint of the page's text and link
   targets (`tools/cv-pdf/source-hash.mjs`). Styling-only edits don't trigger
   it; stat cards, nav, footer and charts are left out of the fingerprint.
-- **The PDF deliberately differs from the page in three ways:** it lists
-  **Medical Licensure** (Arizona #57305 and California #199343 "Physician and
-  Surgeon C"; the user confirmed both are theirs and active; add any others
-  they give you); it
-  omits the page's hospital-privileges and call-coverage lines; and its
-  publications are a bulleted list, not a numbered one. Licensure is PDF-only,
-  so the page-content fingerprint doesn't cover it. Change it in
-  `tools/cv-pdf/cv.html` and rebuild.
+- **The PDF deliberately differs from the page in two ways:** it omits the
+  page's hospital-privileges and call-coverage lines, and its publications are
+  a bulleted list, not a numbered one. Medical licensure (Arizona #57305,
+  California #199343 "Physician and Surgeon C") and the certifications (ABS,
+  ATLS valid July 2024 – July 2028, AHA BLS valid November 2025 –
+  November 2027) are on both, and the user confirmed the licences are theirs and
+  active. Licence and certification dates change on renewal: update both
+  files, rebuild the PDF, and ask the user for the new cards.
 - **Contact details are deliberately absent** (email, phone, address): none is
   on the site, and the PDF is public. Add them only if the user asks.
 - Keep the section headings' letter-spacing at `.08em` or less. Wider tracking
