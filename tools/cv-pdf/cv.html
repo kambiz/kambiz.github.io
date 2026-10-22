@@ -62,16 +62,15 @@ h3 {
 .what { flex: 1 1 auto; }
 .when { flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .where { font-style: italic; }
-.entry ul { margin: 2pt 0 0 14pt; }
-.entry li { margin-bottom: 1.5pt; }
+.desc { margin-top: 2pt; }
 
 /* ── Publications ──
    Each group stays on one page: if the first doesn't fit under the heading,
    the whole section moves to the next page rather than splitting a list. */
 .group { break-inside: avoid; }
 .note { break-after: avoid; }
-ol.pubs { margin-left: 18pt; }
-ol.pubs li { margin-bottom: 4pt; padding-left: 2pt; break-inside: avoid; }
+ul.pubs { margin-left: 14pt; list-style: disc; }
+ul.pubs li { margin-bottom: 4pt; padding-left: 2pt; break-inside: avoid; }
 
 p.interests { margin-top: 0; }
 p.updated { margin-top: 12pt; text-align: right; font-size: 8.5pt; font-style: italic; color: #555; }
@@ -92,11 +91,7 @@ p.updated { margin-top: 12pt; text-align: right; font-size: 8.5pt; font-style: i
       <span class="what"><strong>Acute Care Surgeon</strong>, <span class="where">Banner Medical Group</span>, Greater Phoenix, AZ</span>
       <span class="when">Aug 2020 – Present</span>
     </div>
-    <ul>
-      <li>Acute care and emergency general surgery, including robotic-assisted, laparoscopic, and open procedures.</li>
-      <li>Hospital privileges at Banner Ironwood (Queen Creek), Banner Baywood (Mesa), and Banner Ocotillo Medical Centers.</li>
-      <li>Call coverage at Banner Casa Grande Regional Medical Center.</li>
-    </ul>
+    <p class="desc">Acute care and emergency general surgery, including robotic-assisted, laparoscopic, and open procedures.</p>
   </div>
 </section>
 
@@ -139,7 +134,21 @@ p.updated { margin-top: 12pt; text-align: right; font-size: 8.5pt; font-style: i
 </section>
 
 <section>
-  <h2>Board Certifications</h2>
+  <h2>Medical Licensure</h2>
+  <div class="entry">
+    <div class="row">
+      <span class="what"><strong>Arizona</strong> · Medical License #57305</span>
+    </div>
+  </div>
+  <div class="entry">
+    <div class="row">
+      <span class="what"><strong>California</strong> · Physician and Surgeon C · License #199343</span>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Certifications</h2>
   <div class="entry">
     <div class="row">
       <span class="what"><strong>American Board of Surgery</strong> · Certificate #064995</span>
@@ -149,7 +158,13 @@ p.updated { margin-top: 12pt; text-align: right; font-size: 8.5pt; font-style: i
   <div class="entry">
     <div class="row">
       <span class="what"><strong>Advanced Trauma Life Support (ATLS)</strong> · #3222138</span>
-      <span class="when">July 2020</span>
+      <span class="when">Valid July 2024 – July 2028</span>
+    </div>
+  </div>
+  <div class="entry">
+    <div class="row">
+      <span class="what"><strong>Basic Life Support (BLS) Provider</strong> · American Heart Association</span>
+      <span class="when">Valid November 2025 – November 2027</span>
     </div>
   </div>
 </section>
@@ -182,34 +197,34 @@ p.updated { margin-top: 12pt; text-align: right; font-size: 8.5pt; font-style: i
 
   <div class="group">
     <h3>Peer-Reviewed</h3>
-    <ol class="pubs" start="1">
+    <ul class="pubs">
       <li>Okoh A, <strong>Kamrani K</strong>, Unnikrishnan D, et al. <a href="https://www.ajconline.org/article/S0002-9149(19)30405-9/fulltext">Effect of Transcatheter Aortic Valve Implantation on Renal Function in Patients with Previous Renal Dysfunction.</a> <em>American Journal of Cardiology.</em> 2019.</li>
       <li>McAuliffe JC, Tang LH, <strong>Kamrani K</strong>, et al. <a href="https://jamanetwork.com/journals/jamasurgery/article-abstract/2709734">Prevalence of False-Negative Results of Intraoperative Consultation on Surgical Margins During Resection of Gastric and Gastroesophageal Adenocarcinoma.</a> <em>JAMA Surgery.</em> 2018.</li>
       <li>Shea B, Boyan WP, <strong>Kamrani K</strong>, et al. <a href="https://linkinghub.elsevier.com/retrieve/pii/S0022480417302044">Let’s Cut the Core; When is Core Biopsy Enough for Sub Centimeter Breast Cancer?</a> <em>Journal of Surgical Research.</em> 2017.</li>
       <li>Gallegos ME, Balakrishnan S, Chandramouli P, et al. <a href="https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0049387">The C. elegans Rab Family: Identification, Classification and Toolkit Construction.</a> <em>PLoS ONE.</em> 2012.</li>
-    </ol>
+    </ul>
   </div>
 
   <div class="group">
     <h3>Case Reports</h3>
-    <ol class="pubs" start="5">
+    <ul class="pubs">
       <li><a href="https://www.sciencedirect.com/science/article/pii/S1930043319300433">Undifferentiated embryonal sarcoma of the liver mimicking venolymphatic malformation.</a> <em>Radiology Case Reports.</em> 2019.</li>
       <li><a href="https://www.sciencedirect.com/science/article/pii/S2213576618303440">Adenomyoma causing gastric outlet obstruction.</a> <em>Journal of Pediatric Surgery Case Reports.</em> 2019.</li>
       <li><a href="https://www.oatext.com/acute-intestinal-necrosis-secondary-to-idiopathic-intimal-hyperplasia-of-visceral-small-arteries-a-case-report.php">Acute intestinal necrosis secondary to idiopathic intimal hyperplasia of visceral small arteries.</a> <em>Surgical Case Reports.</em> 2018.</li>
       <li><a href="https://www.sciencedirect.com/science/article/pii/S2214442018302389">Internal hernia secondary to robotic-assisted laparoscopic prostatectomy and extended pelvic lymphadenectomy.</a> <em>Urology Case Reports.</em> 2018.</li>
-    </ol>
+    </ul>
   </div>
 
   <div class="group">
     <h3>Abstracts &amp; Presentations</h3>
-    <ol class="pubs" start="9">
+    <ul class="pubs">
       <li><a href="https://atcmeetingabstracts.com/abstract/impact-of-size-mismatch-on-long-term-graft-survival-after-orthotopic-liver-transplantation/">Impact of Size Mismatch on Long-Term Graft Survival After Orthotopic Liver Transplantation.</a> American Transplant Congress. 2019.</li>
       <li><a href="https://atcmeetingabstracts.com/abstract/the-impact-of-acute-rejection-in-heart-transplantation-on-post-transplant-malignancy/">The Impact of Acute Rejection in Heart Transplantation on Post-Transplant Malignancy.</a> American Transplant Congress. 2019.</li>
       <li><a href="https://www.sages.org/meetings/annual-meeting/abstracts-archive/operative-outcomes-of-ventral-hernia-repairs-in-heart-transplant-patients-a-single-center-experience/">Operative Outcomes of Ventral Hernia Repairs in Heart Transplant Patients.</a> <em>Surgical Endoscopy.</em> 2019.</li>
       <li><a href="http://ectss.org/meeting/abstracts/2018/5.cgi">Association Between CDC “High-risk” Donor Characteristics and Outcomes After Heart Transplantation.</a> Eastern Cardiothoracic Surgical Society. 2018.</li>
       <li><a href="https://www.sciencedirect.com/science/article/pii/S0735109718376320">Association of Immediate Improvement in Renal Function after TAVR and Postoperative Outcomes.</a> <em>Journal of the American College of Cardiology.</em> 2018.</li>
       <li><a href="https://linkinghub.elsevier.com/retrieve/pii/S1072751516312492">Mortality and Timing of Emergency Laparotomy in Penetrating Trauma Patients.</a> <em>Journal of the American College of Surgeons.</em> 2016.</li>
-    </ol>
+    </ul>
   </div>
 </section>
 
