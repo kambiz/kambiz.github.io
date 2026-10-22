@@ -15,7 +15,7 @@ permalink: /cv/
 <link rel="canonical" href="https://kambiz.github.io/cv/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Kambiz Kamrani">
-<meta property="og:title" content="Curriculum Vitae — Kambiz Kamrani, MD">
+<meta property="og:title" content="Curriculum Vitae — Kambiz Kamrani, MD, MS, FACS">
 <meta property="og:description" content="Acute care surgeon with Banner Medical Group in Greater Phoenix, AZ: career timeline, board certifications, publications and professional memberships.">
 <meta property="og:url" content="https://kambiz.github.io/cv/">
 <meta property="og:image" content="https://kambiz.github.io/assets/img/social-card.png">
@@ -32,7 +32,7 @@ permalink: /cv/
   } catch (e) {}
 })();
 </script>
-<title>Curriculum Vitae — Kambiz Kamrani, MD</title>
+<title>Curriculum Vitae — Kambiz Kamrani, MD, MS, FACS</title>
 <link rel="alternate" type="application/pdf" href="/cv/Kambiz-Kamrani-CV.pdf" title="Curriculum vitae (PDF)">
 <script src="/assets/js/chart-4.4.0.umd.js"></script>
 <style>
@@ -81,6 +81,7 @@ a:hover { opacity:.6; }
 .header { border-bottom:2px solid var(--border-strong); padding-bottom:28px; margin-bottom:44px; }
 .header h1 { font-size:2.4em; font-weight:700; letter-spacing:-.5px; margin-bottom:6px; }
 .header-meta { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; }
+.header .creds { white-space:nowrap; } /* wrap the credentials as a unit, not one orphaned on a line */
 .header .subtitle { font-size:.95em; color:var(--muted); }
 .header .nav-link { font-size:.78em; color:var(--faint); }
 .header .nav-link a { color:var(--faint); }
@@ -206,7 +207,7 @@ canvas { max-width:100%; display:block; }
 
 <!-- ── Header ────────────────────────────────────────────────── -->
 <div class="header">
-  <h1>Kambiz Kamrani, MD</h1>
+  <h1>Kambiz Kamrani, <span class="creds">MD, MS, FACS</span></h1>
   <div class="header-meta">
     <span class="subtitle">Acute Care Surgeon &middot; Banner Medical Group &middot; Greater Phoenix, AZ</span>
     {% include nav.html current="CV" %}
