@@ -163,9 +163,15 @@ so it is a **committed build artifact**, made from a separate print layout.
   `source.sha256` no longer matches a fingerprint of the page's text and link
   targets (`tools/cv-pdf/source-hash.mjs`). Styling-only edits don't trigger
   it; stat cards, nav, footer and charts are left out of the fingerprint.
-- **Contact details are deliberately absent** (email, phone, address, licence
-  numbers): none is on the site today, and the PDF is public. Add them only if
-  the user asks.
+- **The PDF deliberately differs from the page in three ways:** it lists
+  **Medical Licensure** (Arizona #57305, from the public NPI registry; the user
+  asked for their active state licences, so add any others they give you); it
+  omits the page's hospital-privileges and call-coverage lines; and its
+  publications are a bulleted list, not a numbered one. Licensure is PDF-only,
+  so the page-content fingerprint doesn't cover it. Change it in
+  `tools/cv-pdf/cv.html` and rebuild.
+- **Contact details are deliberately absent** (email, phone, address): none is
+  on the site, and the PDF is public. Add them only if the user asks.
 - Keep the section headings' letter-spacing at `.08em` or less. Wider tracking
   makes some text extractors read "EDUCATION" as "E D U C AT I O N", which
   breaks résumé parsers.
