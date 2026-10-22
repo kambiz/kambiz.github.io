@@ -164,8 +164,9 @@ so it is a **committed build artifact**, made from a separate print layout.
   targets (`tools/cv-pdf/source-hash.mjs`). Styling-only edits don't trigger
   it; stat cards, nav, footer and charts are left out of the fingerprint.
 - **The PDF deliberately differs from the page in three ways:** it lists
-  **Medical Licensure** (Arizona #57305, from the public NPI registry; the user
-  asked for their active state licences, so add any others they give you); it
+  **Medical Licensure** (Arizona #57305 and California #199343 "Physician and
+  Surgeon C"; the user confirmed both are theirs and active; add any others
+  they give you); it
   omits the page's hospital-privileges and call-coverage lines; and its
   publications are a bulleted list, not a numbered one. Licensure is PDF-only,
   so the page-content fingerprint doesn't cover it. Change it in
