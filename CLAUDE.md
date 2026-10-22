@@ -163,9 +163,9 @@ so it is a **committed build artifact**, made from a separate print layout.
   `source.sha256` no longer matches a fingerprint of the page's text and link
   targets (`tools/cv-pdf/source-hash.mjs`). Styling-only edits don't trigger
   it; stat cards, nav, footer and charts are left out of the fingerprint.
-- **The PDF deliberately differs from the page in two ways:** it omits the
-  page's hospital-privileges and call-coverage lines, and its publications are
-  a bulleted list, not a numbered one. Medical licensure (Arizona #57305,
+- **The PDF deliberately differs from the page in one way:** its publications
+  are a bulleted list, not a numbered one. (Neither lists hospital privileges
+  or call coverage: the user asked for them removed from both.) Medical licensure (Arizona #57305,
   California #199343 "Physician and Surgeon C") and the certifications (ABS,
   ATLS valid July 2024 – July 2028, AHA BLS valid November 2025 –
   November 2027) are on both, and the user confirmed the licences are theirs and
