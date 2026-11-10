@@ -57,6 +57,13 @@ h3 {
 .note { font-size: 9pt; font-style: italic; color: #444; margin: -2pt 0 4pt; }
 
 /* ── Entries: what on the left, when on the right ── */
+.ops-note { margin: 0 0 4pt; font-size: 9.5pt; }
+section.ops-sec { break-inside: avoid; }
+table.ops { width: 100%; border-collapse: collapse; margin-bottom: 4pt; }
+table.ops th, table.ops td { padding: 1pt 0; text-align: left; font-weight: 400; }
+table.ops td:nth-child(n+2) { text-align: right; width: 5.5em; }
+table.ops tr.grp th, table.ops tr.grp td { font-weight: 700; padding-top: 4pt; }
+table.ops tr:not(.grp) th { padding-left: 10pt; }
 .entry { margin-bottom: 5pt; break-inside: avoid; }
 .row { display: flex; justify-content: space-between; align-items: baseline; gap: 14pt; }
 .what { flex: 1 1 auto; }
@@ -169,6 +176,28 @@ p.updated { margin-top: 12pt; text-align: right; font-size: 8.5pt; font-style: i
   </div>
 </section>
 
+<section class="ops-sec">
+  <h2>Operative Experience</h2>
+  <p class="ops-note">243 cases as primary surgeon, January 11, 2025 – August 15, 2026 (about 153 a year): 98 in 2025, 145 in 2026 through August 15, and 212 in the most recent twelve months. Per-year figures average each count over the 1.6 years logged.</p>
+  <table class="ops">
+    <tr class="grp"><th>Laparoscopic</th><td>187</td><td>≈117 / yr</td></tr>
+    <tr><th>Cholecystectomy (one with cholangiography)</th><td>103</td><td>≈65 / yr</td></tr>
+    <tr><th>Appendectomy</th><td>68</td><td>≈43 / yr</td></tr>
+    <tr><th>Diagnostic laparoscopy</th><td>16</td><td>≈10 / yr</td></tr>
+    <tr class="grp"><th>Robotic</th><td>18</td><td>≈11 / yr</td></tr>
+    <tr><th>Inguinal hernia repair</th><td>11</td><td>≈7 / yr</td></tr>
+    <tr><th>Ventral hernia repair</th><td>5</td><td>≈3 / yr</td></tr>
+    <tr><th>Other (umbilical hernia repair, diagnostic laparoscopy)</th><td>2</td><td>≈1 / yr</td></tr>
+    <tr class="grp"><th>Open (top 5 shown)</th><td>35</td><td>≈22 / yr</td></tr>
+    <tr><th>Exploratory laparotomy</th><td>20</td><td>≈13 / yr</td></tr>
+    <tr><th>Perirectal abscess incision &amp; drainage</th><td>8</td><td>≈5 / yr</td></tr>
+    <tr><th>Colectomy at laparotomy, including Hartmann procedure</th><td>7</td><td>≈4 / yr</td></tr>
+    <tr><th>Trunk abscess incision &amp; drainage</th><td>5</td><td>≈3 / yr</td></tr>
+    <tr><th>Hartmann procedure</th><td>2</td><td>≈1 / yr</td></tr>
+  </table>
+  <p class="ops-note">Source: operating-room case log. Robotic cases used the da Vinci 5 (12) and da Vinci Xi (6). Colectomy and Hartmann cases are also counted within exploratory laparotomy. Three cases logged without an approach are not listed.</p>
+</section>
+
 <section>
   <h2>Professional Memberships</h2>
   <div class="entry"><strong>Fellow, American College of Surgeons</strong> (FACS)</div>
@@ -231,6 +260,11 @@ p.updated { margin-top: 12pt; text-align: right; font-size: 8.5pt; font-style: i
 <section>
   <h2>Personal Interests</h2>
   <p class="interests">Hiking, backpacking, cycling, swimming, skiing, kayaking, illustration, photography, watercolor, sculpting.</p>
+</section>
+
+<section>
+  <h2>References</h2>
+  <p>Available upon request.</p>
 </section>
 
 <p class="updated">Last updated <span id="updated"></span></p>

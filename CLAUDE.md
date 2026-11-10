@@ -171,8 +171,20 @@ so it is a **committed build artifact**, made from a separate print layout.
   November 2027) are on both, and the user confirmed the licences are theirs and
   active. Licence and certification dates change on renewal: update both
   files, rebuild the PDF, and ask the user for the new cards.
+- **Operative Experience** (both files) summarises the surgeon's operating-room
+  case log, Jan 11 2025 – Aug 15 2026: aggregate counts only, never case
+  numbers or anything patient-level. The spreadsheet and the Procedure Report
+  PDF it came from are not in the repo. The report (Nov 2023 – Nov 2025,
+  procedure-level ICD-10-PCS counts, a different window and unit) is not merged
+  in, because the two overlap. Per-year figures are counts ÷ 1.59 years. Refresh
+  both files and the PDF from a new log; ask the user for it.
 - **Contact details are deliberately absent** (email, phone, address): none is
   on the site, and the PDF is public. Add them only if the user asks.
+- **Never commit a DEA registration number.** Everything committed here is
+  published, and a DEA number can be misused to forge prescriptions. If the
+  user wants it on a CV, produce that version outside the repo and hand it to
+  them directly. References are deliberately unnamed: the page and PDF say
+  "Available upon request".
 - Keep the section headings' letter-spacing at `.08em` or less. Wider tracking
   makes some text extractors read "EDUCATION" as "E D U C AT I O N", which
   breaks résumé parsers.
