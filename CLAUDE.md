@@ -183,7 +183,8 @@ so it is a **committed build artifact**, made from a separate print layout.
 - **Never commit a DEA registration number.** Everything committed here is
   published, and a DEA number can be misused to forge prescriptions. If the
   user wants it on a CV, produce that version outside the repo and hand it to
-  them directly. References are deliberately unnamed: the page and PDF say
+  them directly. The page and PDF say only "DEA Registration: Active, number
+  available on request" (the user's choice). References are deliberately unnamed: the page and PDF say
   "Available upon request".
 - Keep the section headings' letter-spacing at `.08em` or less. Wider tracking
   makes some text extractors read "EDUCATION" as "E D U C AT I O N", which
